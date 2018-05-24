@@ -604,7 +604,7 @@ prepareWorkerRepository () {
 #   $1: the name of the branch to work with
 processBranch () {
 	echo '  - fetching'
-	git -C "${WORKER_REPOSITORY_DIR}" fetch --quiet --tags source "${1}"
+	git -C "${WORKER_REPOSITORY_DIR}" fetch --update-shallow --quiet --tags source "${1}"
 	echo '  - setting current branch'
 	git -C "${WORKER_REPOSITORY_DIR}" update-ref "refs/heads/filter-branch/source/${1}" "refs/remotes/source/${1}"
 	git -C "${WORKER_REPOSITORY_DIR}" symbolic-ref HEAD "refs/heads/filter-branch/source/${1}"
