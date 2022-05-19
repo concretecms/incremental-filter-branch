@@ -1,5 +1,5 @@
 {
-    "name": "concrete5/incremental-filter-branch",
+    "name": "concretecms/incremental-filter-branch",
     "description": "Shell script to call git filter-branch in an incremental way",
     "type": "library",
     "keywords": [
