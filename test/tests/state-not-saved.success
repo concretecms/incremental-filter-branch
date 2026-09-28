@@ -1,0 +1,41 @@
+#!/bin/sh
+
+# git filter-branch doesn't fail if it's not able to save its state: the script must detect it,
+# since the following executions would be wrong.
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+runMain
+
+echo 'Preventing git from saving the state'
+for DIR_WORKER in "${DIR_TEMP}"/worker-*; do
+	if [ -f "${DIR_WORKER}/config" ]; then
+		break
+	fi
+done
+# A ref named refs/filter-branch/state can't exist if there's a ref named refs/filter-branch/state/something
+stateCommit="$(git -C "${DIR_WORKER}" rev-parse refs/filter-branch/state)"
+git -C "${DIR_WORKER}" update-ref -d refs/filter-branch/state
+git -C "${DIR_WORKER}" update-ref refs/filter-branch/state/blocker "${stateCommit}"
+
+touch "${DIR_SOURCE}/subdir/subfile4"
+git -C "${DIR_SOURCE}" add --all
+git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #9'
+
+if runMain 2>"${DIR_TEMP}/stderr"; then
+	cat "${DIR_TEMP}/stderr" >&2
+	echo 'The script should have failed' >&2
+	exit 1
+fi
+cat "${DIR_TEMP}/stderr" >&2
+if ! grep -Fq 'failed to save its state' "${DIR_TEMP}/stderr"; then
+	echo 'The script failed, but for another reason' >&2
+	exit 1
+fi
