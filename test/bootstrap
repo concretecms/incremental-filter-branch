@@ -5,8 +5,7 @@ set -o nounset
 IFS=' 	
 '
 
-if test "${IS_TEST_CASE:-1}" -eq '1'
-then
+if test "${IS_TEST_CASE:-1}" -eq '1'; then
 	DIR_TESTCASES="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 	DIR_TEST="$(dirname "${DIR_TESTCASES}")"
 else
@@ -20,19 +19,17 @@ DIR_SOURCE="${DIR_TEMP}/source"
 DIR_DESTINATION="${DIR_TEMP}/destination"
 
 BIN_MAIN="${DIR_BIN}/incremental-git-filterbranch"
-if test ! -f "${BIN_MAIN}"
-then
-	echo 'Failed to detect environment'>&2
+if test ! -f "${BIN_MAIN}"; then
+	echo 'Failed to detect environment' >&2
 	exit 1
 fi
 
 BIN_MAIN_OPTIONS=''
-if ! command -v flock >/dev/null
-then
+if ! command -v flock >/dev/null; then
 	BIN_MAIN_OPTIONS="${BIN_MAIN_OPTIONS} --no-lock"
 fi
 
-initializeRepositories () {
+initializeRepositories() {
 	rm -rf "${DIR_TEMP}"
 	mkdir "${DIR_TEMP}"
 
@@ -66,7 +63,7 @@ initializeRepositories () {
 	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #5'
 
 	git -C "${DIR_SOURCE}" tag tag-03
-	
+
 	touch "${DIR_SOURCE}/rootfile3"
 	git -C "${DIR_SOURCE}" add --all
 	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #6'
@@ -75,7 +72,7 @@ initializeRepositories () {
 	git -C "${DIR_SOURCE}" add --all
 	git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #4b'
 
-	git  -C "${DIR_SOURCE}" checkout --quiet -b slave tag-02
+	git -C "${DIR_SOURCE}" checkout --quiet -b slave tag-02
 
 	touch "${DIR_SOURCE}/in-root-2"
 	git -C "${DIR_SOURCE}" add --all
@@ -90,12 +87,12 @@ initializeRepositories () {
 	git init --bare --quiet "${DIR_DESTINATION}"
 }
 
-getTagList () {
+getTagList() {
 	getTagList_multiline=$(git -C "${1}" show-ref --tags | sed -E 's:^.* refs/tags/::' || true)
 	printf '%s' "${getTagList_multiline}" | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g'
 }
 
-getBranchList () {
+getBranchList() {
 	getBranchList_multiline=$(git -C "${1}" show-ref --heads | sed -E 's:^.* refs/heads/::' || true)
 	printf '%s' "${getBranchList_multiline}" | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g'
 }

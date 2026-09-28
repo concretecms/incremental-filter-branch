@@ -9,9 +9,8 @@ initializeRepositories
 echo 'Fetching initial tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"
 expectedTags='tag-02'
-if test "${actualTags}" != "${expectedTags}"
-then
-	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}">&2
+if test "${actualTags}" != "${expectedTags}"; then
+	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}" >&2
 	exit 1
 fi
 
@@ -20,8 +19,7 @@ fi
 echo 'Fetching final tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"
 expectedTags=''
-if test "${actualTags}" != "${expectedTags}"
-then
-	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}">&2
+if test "${actualTags}" != "${expectedTags}"; then
+	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}" >&2
 	exit 1
 fi
