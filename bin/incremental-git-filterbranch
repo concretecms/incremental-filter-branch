@@ -739,6 +739,8 @@ restoreState() {
 }
 
 # Print the SHA-1 hash of the translated commit that's nearest to a commit of the source repository.
+# We walk the history of the source commit, stopping at the first translated commit of every line of development.
+# If we find more than one translated commit (that's the case of merges), we take the one that contains the other ones.
 #
 # Arguments:
 #   $1: the SHA-1 hash of the source commit
@@ -753,12 +755,42 @@ getNearestTranslatedCommit() {
 			return 0
 		fi
 	fi
-	for getNearestTranslatedCommit_commitHash in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --date-order ${2:+--max-count="${2}"} "${1}"); do
+	getNearestTranslatedCommit_queue="${1}"
+	getNearestTranslatedCommit_inspected=''
+	getNearestTranslatedCommit_count=0
+	getNearestTranslatedCommit_result=''
+	while [ -n "${getNearestTranslatedCommit_queue}" ]; do
+		getNearestTranslatedCommit_commitHash="${getNearestTranslatedCommit_queue%% *}"
+		case "${getNearestTranslatedCommit_queue}" in
+			*' '*)
+				getNearestTranslatedCommit_queue="${getNearestTranslatedCommit_queue#* }"
+				;;
+			*)
+				getNearestTranslatedCommit_queue=''
+				;;
+		esac
+		if itemInList "${getNearestTranslatedCommit_commitHash}" "${getNearestTranslatedCommit_inspected}"; then
+			continue
+		fi
+		if [ -n "${2}" ] && [ "${getNearestTranslatedCommit_count}" -ge "${2}" ]; then
+			break
+		fi
+		getNearestTranslatedCommit_inspected="${getNearestTranslatedCommit_inspected} ${getNearestTranslatedCommit_commitHash}"
+		getNearestTranslatedCommit_count=$((getNearestTranslatedCommit_count + 1))
 		if getNearestTranslatedCommit_mappedCommit="$(grep -E "^${getNearestTranslatedCommit_commitHash}:." "${WORKER_REPOSITORY_DIR}.map")"; then
-			printf '%s' "${getNearestTranslatedCommit_mappedCommit#"${getNearestTranslatedCommit_commitHash}":}"
-			return 0
+			getNearestTranslatedCommit_mappedCommit="${getNearestTranslatedCommit_mappedCommit#"${getNearestTranslatedCommit_commitHash}":}"
+			if [ -z "${getNearestTranslatedCommit_result}" ]; then
+				getNearestTranslatedCommit_result="${getNearestTranslatedCommit_mappedCommit}"
+			elif git -C "${WORKER_REPOSITORY_DIR}" merge-base --is-ancestor "${getNearestTranslatedCommit_result}" "${getNearestTranslatedCommit_mappedCommit}" 2>/dev/null; then
+				getNearestTranslatedCommit_result="${getNearestTranslatedCommit_mappedCommit}"
+			fi
+		else
+			for getNearestTranslatedCommit_parent in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents --max-count=1 "${getNearestTranslatedCommit_commitHash}" | cut -s -d ' ' -f 2-); do
+				getNearestTranslatedCommit_queue="${getNearestTranslatedCommit_queue:+${getNearestTranslatedCommit_queue} }${getNearestTranslatedCommit_parent}"
+			done
 		fi
 	done
+	printf '%s' "${getNearestTranslatedCommit_result}"
 }
 
 # Remove the converted tags associated to commits that haven't been rewritten by the filter.
