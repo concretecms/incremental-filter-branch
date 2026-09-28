@@ -1,0 +1,25 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+# $1: the filter
+# $2: the expected commits
+checkFilter() {
+	initializeRepositories
+
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' -- "${DIR_SOURCE}" "${1}" "${DIR_DESTINATION}"
+
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format=%s refs/heads/master | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualCommits}" != "${2}" ]; then
+		printf 'Filter: %s\nExpected commits: %s\nResulting commits: %s\n' "${1}" "${2}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+echo 'Filter with an argument in double quotes'
+checkFilter '--prune-empty --subdirectory-filter subdir --msg-filter "sed s/Commit/Rewritten/"' 'Rewritten #2 Rewritten #3 Rewritten #4 Rewritten #4b'
+
+echo 'Filter with an argument in single quotes, containing double quotes'
+# shellcheck disable=SC2016
+checkFilter '--subdirectory-filter subdir --commit-filter '"'"'git commit-tree "$@"'"'"'' 'Commit #2 Commit #3 Commit #4 Commit #4b'
