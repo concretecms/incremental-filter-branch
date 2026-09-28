@@ -625,7 +625,7 @@ processBranch() {
 			processBranch_tagNameFilter='read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"'
 		fi
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
-		processBranch_swappedState="$(swapState)"
+		processBranch_preparedState="$(prepareState "${processBranch_range}")"
 		set +o errexit
 		# shellcheck disable=SC2086
 		FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
@@ -640,7 +640,8 @@ processBranch() {
 			2>"${WORKER_REPOSITORY_DIR}.stderr"
 		processBranch_rc=$?
 		set -o errexit
-		restoreState "${processBranch_swappedState}"
+		restoreState "${processBranch_preparedState}"
+		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		if [ -s "${WORKER_REPOSITORY_DIR}.stderr" ]; then
 			cat "${WORKER_REPOSITORY_DIR}.stderr" >&2
 			if [ ${processBranch_rc} -eq 1 ]; then
@@ -679,32 +680,52 @@ processBranch() {
 	fi
 }
 
-# Work around the bug of git that swaps the original and the rewritten commits when loading the map from the state branch
-# (see detectSwappedStateBug).
-# We temporarily store in the state branch a map with swapped commits.
+# Prepare the state branch before running filter-branch, by temporarily storing a new map in it:
+# - the parents of the commits to be rewritten must be in the map, otherwise the rewritten commits would be attached to the history
+#   of the source repository (that's the case of previously processed commits that aren't rewritten by the filter)
+# - we work around the bug of git that swaps the original and the rewritten commits when loading the map from the state branch
+#   (see detectSwappedStateBug)
+#
+# Arguments:
+#   $1: the range of commits that will be passed to filter-branch
 #
 # Output:
 #   Empty string if there's nothing to be restored after running filter-branch
 #   Otherwise: the original and the temporary SHA-1 of the state branch, separated by a colon
-swapState() {
+prepareState() {
+	prepareState_original="$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)"
+	if [ -z "${prepareState_original}" ]; then
+		return 0
+	fi
+	git -C "${WORKER_REPOSITORY_DIR}" show "${prepareState_original}:filter.map" >"${WORKER_REPOSITORY_DIR}.map"
+	prepareState_changed=${SWAPPED_STATE_BUG}
+	for prepareState_boundary in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --boundary "${1}" | sed -n -E 's/^-//p'); do
+		if ! grep -Eq "^${prepareState_boundary}:" "${WORKER_REPOSITORY_DIR}.map"; then
+			prepareState_translated="$(getNearestTranslatedCommit "${prepareState_boundary}" '')"
+			if [ -n "${prepareState_translated}" ]; then
+				printf '%s:%s\n' "${prepareState_boundary}" "${prepareState_translated}" >>"${WORKER_REPOSITORY_DIR}.map"
+				prepareState_changed=1
+			fi
+		fi
+	done
+	if [ ${prepareState_changed} -eq 0 ]; then
+		return 0
+	fi
 	if [ ${SWAPPED_STATE_BUG} -eq 0 ]; then
-		return 0
+		prepareState_blob="$(git -C "${WORKER_REPOSITORY_DIR}" hash-object -w --stdin <"${WORKER_REPOSITORY_DIR}.map")"
+	else
+		prepareState_blob="$(sed -E 's/^([^:]*):(.*)$/\2:\1/' "${WORKER_REPOSITORY_DIR}.map" | git -C "${WORKER_REPOSITORY_DIR}" hash-object -w --stdin)"
 	fi
-	swapState_original="$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)"
-	if [ -z "${swapState_original}" ]; then
-		return 0
-	fi
-	swapState_blob="$(git -C "${WORKER_REPOSITORY_DIR}" show "${swapState_original}:filter.map" | sed -E 's/^([^:]*):(.*)$/\2:\1/' | git -C "${WORKER_REPOSITORY_DIR}" hash-object -w --stdin)"
-	swapState_tree="$(printf '100644 blob %s\tfilter.map\n' "${swapState_blob}" | git -C "${WORKER_REPOSITORY_DIR}" mktree)"
-	swapState_swapped="$(git -C "${WORKER_REPOSITORY_DIR}" commit-tree -m 'Swap' -p "${swapState_original}" "${swapState_tree}")"
-	git -C "${WORKER_REPOSITORY_DIR}" update-ref refs/filter-branch/state "${swapState_swapped}"
-	printf '%s:%s' "${swapState_original}" "${swapState_swapped}"
+	prepareState_tree="$(printf '100644 blob %s\tfilter.map\n' "${prepareState_blob}" | git -C "${WORKER_REPOSITORY_DIR}" mktree)"
+	prepareState_prepared="$(git -C "${WORKER_REPOSITORY_DIR}" commit-tree -m 'Prepare' -p "${prepareState_original}" "${prepareState_tree}")"
+	git -C "${WORKER_REPOSITORY_DIR}" update-ref refs/filter-branch/state "${prepareState_prepared}"
+	printf '%s:%s' "${prepareState_original}" "${prepareState_prepared}"
 }
 
 # Restore the state branch if filter-branch didn't update it.
 #
 # Arguments:
-#   $1: the output of swapState
+#   $1: the output of prepareState
 restoreState() {
 	if [ -z "${1}" ]; then
 		return 0

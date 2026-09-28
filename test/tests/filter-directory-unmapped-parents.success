@@ -1,0 +1,59 @@
+#!/bin/sh
+
+# Scenario:
+# 1. the source repository is processed
+# 2. an incremental run only processes commits that don't change the filtered directory (the filter has nothing to rewrite)
+# 3. a new commit changes the filtered directory
+# 4. a new incremental run is performed
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan all -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+checkDestination() {
+	echo 'Checking tags'
+	actualTags="$(getTagList "${DIR_DESTINATION}")"
+	if [ "${actualTags}" != "${1}" ]; then
+		printf 'Expected tags: %s\nResulting tags: %s\n' "${1}" "${actualTags}" >&2
+		exit 1
+	fi
+	echo 'Checking files'
+	actualFiles="$(git -C "${DIR_SOURCE}" ls-tree -r --name-only refs/heads/master -- subdir | sed -E 's:^subdir/::' | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	expectedFiles="${actualFiles}"
+	actualFiles="$(git -C "${DIR_DESTINATION}" ls-tree -r --name-only refs/heads/master | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualFiles}" != "${expectedFiles}" ]; then
+		printf 'Expected files: %s\nResulting files: %s\n' "${expectedFiles}" "${actualFiles}" >&2
+		exit 1
+	fi
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format=%s refs/heads/master | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualCommits}" != "${2}" ]; then
+		printf 'Expected commits: %s\nResulting commits: %s\n' "${2}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+# $1: the name of the file to be created
+# $2: the commit message
+addCommit() {
+	touch "${DIR_SOURCE}/${1}"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message "${2}"
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+runMain
+checkDestination 'tag-02 tag-03' 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+addCommit rootfile4 'Commit #9'
+git -C "${DIR_SOURCE}" tag tag-05
+runMain
+checkDestination 'tag-02 tag-03 tag-05' 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+addCommit subdir/subfile4 'Commit #10'
+runMain
+checkDestination 'tag-02 tag-03 tag-05' 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #10'
