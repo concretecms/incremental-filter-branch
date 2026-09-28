@@ -9,7 +9,7 @@ initializeRepositories
 echo 'Fetching initial branches'
 actualBranches="$(getBranchList "${DIR_DESTINATION}")"
 expectedBrances='master slave'
-if test "${actualBranches}" != "${expectedBrances}"; then
+if [ "${actualBranches}" != "${expectedBrances}" ]; then
 	printf 'Expected branches: %s\nResulting branches: %s\n' "${expectedBrances}" "${actualBranches}" >&2
 	exit 1
 fi
@@ -19,7 +19,7 @@ fi
 echo 'Fetching final branches'
 actualBranches="$(getBranchList "${DIR_DESTINATION}")"
 expectedBrances='master'
-if test "${actualBranches}" != "${expectedBrances}"; then
+if [ "${actualBranches}" != "${expectedBrances}" ]; then
 	printf 'Expected branches: %s\nResulting branches: %s\n' "${expectedBrances}" "${actualBranches}" >&2
 	exit 1
 fi

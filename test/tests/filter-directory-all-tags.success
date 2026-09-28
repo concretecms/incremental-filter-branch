@@ -9,7 +9,7 @@ initializeRepositories
 echo 'Fetching tags'
 actualTags="$(getTagList "${DIR_DESTINATION}")"
 expectedTags='tag-02 tag-03'
-if test "${actualTags}" != "${expectedTags}"; then
+if [ "${actualTags}" != "${expectedTags}" ]; then
 	printf 'Expected tags: %s\nResulting tags: %s\n' "${expectedTags}" "${actualTags}" >&2
 	exit 1
 fi

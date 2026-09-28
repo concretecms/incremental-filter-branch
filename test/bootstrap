@@ -5,7 +5,7 @@ set -o nounset
 IFS=' 	
 '
 
-if test "${IS_TEST_CASE:-1}" -eq '1'; then
+if [ "${IS_TEST_CASE:-1}" -eq '1' ]; then
 	DIR_TESTCASES="$(cd -- "$(dirname -- "$0")" && pwd -P)"
 	DIR_TEST="$(dirname "${DIR_TESTCASES}")"
 else
@@ -19,7 +19,7 @@ DIR_SOURCE="${DIR_TEMP}/source"
 DIR_DESTINATION="${DIR_TEMP}/destination"
 
 BIN_MAIN="${DIR_BIN}/incremental-git-filterbranch"
-if test ! -f "${BIN_MAIN}"; then
+if [ ! -f "${BIN_MAIN}" ]; then
 	echo 'Failed to detect environment' >&2
 	exit 1
 fi
