@@ -17,6 +17,18 @@ permissions:
   contents: read
 
 jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Pull latest ShellCheck
+        run: docker pull --quiet koalaman/shellcheck:stable
+      - name: Show ShellCheck version
+        run: docker run --rm koalaman/shellcheck:stable --version
+      - name: Run ShellCheck
+        run: docker run --rm --volume "$PWD:/mnt:ro" --workdir /mnt koalaman/shellcheck:stable bin/incremental-git-filterbranch test/bootstrap test/run-tests test/tests/*
   tests:
     name: Tests (${{ matrix.os }}, git ${{ matrix.git-version || 'preinstalled' }})
     runs-on: ${{ matrix.os }}
