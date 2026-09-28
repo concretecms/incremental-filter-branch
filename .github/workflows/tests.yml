@@ -42,15 +42,20 @@ jobs:
       - name: Run shfmt
         run: docker run --rm --volume "$PWD:/mnt:ro" --workdir /mnt mvdan/shfmt:v3 --diff bin/incremental-git-filterbranch test/bootstrap test/run-tests test/tests/*
   tests:
-    name: Tests (git ${{ matrix.git-version }})
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }}, git ${{ matrix.git-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-latest
         git-version:
           - preinstalled
           - 2.16.6
           - 2.49.1
+        include:
+          - os: macos-latest
+            git-version: preinstalled
     steps:
       - name: Checkout
         uses: actions/checkout@v7
