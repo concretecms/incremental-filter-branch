@@ -650,10 +650,12 @@ processBranch() {
 		fi
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		processBranch_preparedState="$(prepareState "${processBranch_range}")"
+		processBranch_stateBefore="$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)"
 		set +o errexit
 		runFilterBranch "${1}" "${processBranch_range}" "${processBranch_tagNameFilter}"
 		processBranch_rc=$?
 		set -o errexit
+		processBranch_stateAfter="$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)"
 		restoreState "${processBranch_preparedState}"
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		if [ -s "${WORKER_REPOSITORY_DIR}.stderr" ]; then
@@ -666,6 +668,12 @@ processBranch() {
 		fi
 		if [ ${processBranch_rc} -ne 0 ] && [ ${processBranch_rc} -ne 2 ]; then
 			die 'git failed'
+		fi
+		if [ ${processBranch_rc} -eq 0 ]; then
+			# git filter-branch doesn't fail if it's not able to save its state, but without it the next executions would be wrong
+			if [ -z "${processBranch_stateAfter}" ] || [ "${processBranch_stateAfter}" = "${processBranch_stateBefore}" ]; then
+				die 'git filter-branch failed to save its state'
+			fi
 		fi
 		if [ ${processBranch_rc} -eq 2 ]; then
 			# filter-branch didn't rewrite the result branch: it still points to a commit of the source repository
