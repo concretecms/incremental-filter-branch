@@ -30,36 +30,24 @@ jobs:
       - name: Run ShellCheck
         run: docker run --rm --volume "$PWD:/mnt:ro" --workdir /mnt koalaman/shellcheck:stable bin/incremental-git-filterbranch test/bootstrap test/run-tests test/tests/*
   tests:
-    name: Tests (${{ matrix.os }}, git ${{ matrix.git-version || 'preinstalled' }})
-    runs-on: ${{ matrix.os }}
+    name: Tests (git ${{ matrix.git-version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-          - os: ubuntu-24.04
-          - os: ubuntu-26.04
-          - os: ubuntu-24.04
-            git-version: 2.16.6
-          - os: ubuntu-24.04
-            git-version: 2.49.1
-          - os: ubuntu-24.04
-            git-version: ppa
+        git-version:
+          - preinstalled
+          - 2.16.6
+          - 2.49.1
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Install git from PPA
-        if: matrix.git-version == 'ppa'
-        run: |
-          sudo add-apt-repository --yes ppa:git-core/ppa
-          sudo apt-get update --quiet
-          sudo apt-get install --yes --quiet git
       - name: Configure git build
-        if: matrix.git-version && matrix.git-version != 'ppa'
+        if: matrix.git-version != 'preinstalled'
         id: git-build
         run: |
           echo "dir=$HOME/git-${{ matrix.git-version }}" >>"$GITHUB_OUTPUT"
-          echo "cache-key=git-${{ matrix.git-version }}-$ImageOS-$RUNNER_ARCH-v1" >>"$GITHUB_OUTPUT"
+          echo "cache-key=git-${{ matrix.git-version }}-$ImageOS-$RUNNER_ARCH-v2" >>"$GITHUB_OUTPUT"
       - name: Restore git from cache
         if: steps.git-build.outputs.dir
         id: git-cache
@@ -85,7 +73,8 @@ jobs:
           curl --silent --show-error --fail --location --output git.tar.xz "https://www.kernel.org/pub/software/scm/git/git-${{ matrix.git-version }}.tar.xz"
           tar --extract --file=git.tar.xz
           cd "git-${{ matrix.git-version }}"
-          make "-j$(nproc)" "prefix=${{ steps.git-build.outputs.dir }}" install
+          # Old git versions can't be compiled with the C standard used by default by recent compilers
+          make "-j$(nproc)" "prefix=${{ steps.git-build.outputs.dir }}" 'CFLAGS=-g -O2 -std=gnu17' install
       - name: Use built git
         if: steps.git-build.outputs.dir
         run: echo "${{ steps.git-build.outputs.dir }}/bin" >>"$GITHUB_PATH"
