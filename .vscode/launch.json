@@ -2,16 +2,34 @@
 	"version": "0.2.0",
 	"configurations": [
 		{
+			"name": "Run tests",
 			"type": "bashdb",
 			"request": "launch",
-			"name": "incremental-git-filterbranch",
-			"showDebugOutput": false,
-			"trace": false,
-			"cwd": "${workspaceFolder}/test",
-			"program": "run-tests",
-			"osx": {
-				"pathPkill": "/usr/bin/pkill"
-			}
+			"cwd": "${workspaceFolder}",
+			"program": "${workspaceFolder}/test/run-tests",
+			// Specify here the name of a test (without extension) to run only that test
+			"args": []
+		},
+		{
+			// Debug the main script, using the repositories created by the tests (so you have to run at least one test before)
+			"name": "Main script on test repositories",
+			"type": "bashdb",
+			"request": "launch",
+			"cwd": "${workspaceFolder}",
+			"program": "${workspaceFolder}/bin/incremental-git-filterbranch",
+			"args": [
+				"--workdir",
+				"test/temp/debug",
+				"--no-lock",
+				"--branch-whitelist",
+				"master",
+				"--tags-plan",
+				"all",
+				"--",
+				"test/temp/source",
+				"--prune-empty --subdirectory-filter subdir",
+				"test/temp/destination"
+			]
 		}
 	]
 }
