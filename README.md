@@ -1,4 +1,4 @@
-[![TravisCI Build Status](https://travis-ci.org/concrete5/incremental-filter-branch.svg?branch=master)](https://travis-ci.org/concrete5/incremental-filter-branch)
+[![Tests](https://github.com/concretecms/incremental-filter-branch/actions/workflows/tests.yml/badge.svg)](https://github.com/concretecms/incremental-filter-branch/actions/workflows/tests.yml)
 
 ## Introduction
 
