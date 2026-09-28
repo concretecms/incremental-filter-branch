@@ -97,9 +97,5 @@ jobs:
         run: echo "${{ steps.git-build.outputs.dir }}/bin" >>"$GITHUB_PATH"
       - name: Show git version
         run: git --version
-      - name: Configure git identity
-        run: |
-          git config --global user.name 'John Doe'
-          git config --global user.email 'email@example.com'
       - name: Run tests
         run: ./test/run-tests
