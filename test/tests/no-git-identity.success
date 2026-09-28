@@ -1,0 +1,42 @@
+#!/bin/sh
+
+# The script must work even if git is not configured with the identity of the user.
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+# $1: the expected commits
+checkCommits() {
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format='%s by %an <%ae>' refs/heads/master | tr '\n' ',' | sed -E 's:,$::')"
+	if [ "${actualCommits}" != "${1}" ]; then
+		printf 'Expected commits: %s\nResulting commits: %s\n' "${1}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+echo 'Configuring git so that it has no identity'
+DIR_HOME="${DIR_TEMP}/home"
+mkdir "${DIR_HOME}"
+printf '[user]\n\tuseConfigOnly = true\n' >"${DIR_HOME}/.gitconfig"
+HOME="${DIR_HOME}"
+XDG_CONFIG_HOME="${DIR_HOME}/.config"
+GIT_CONFIG_NOSYSTEM=1
+export HOME XDG_CONFIG_HOME GIT_CONFIG_NOSYSTEM
+unset GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL EMAIL
+
+runMain
+checkCommits 'Commit #2 by John Doe <email@example.com>,Commit #3 by John Doe <email@example.com>,Commit #4 by John Doe <email@example.com>,Commit #4b by John Doe <email@example.com>'
+
+touch "${DIR_SOURCE}/subdir/subfile4"
+git -C "${DIR_SOURCE}" add --all
+git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #9'
+
+runMain
+checkCommits 'Commit #2 by John Doe <email@example.com>,Commit #3 by John Doe <email@example.com>,Commit #4 by John Doe <email@example.com>,Commit #4b by John Doe <email@example.com>,Commit #9 by John Doe <email@example.com>'
