@@ -29,6 +29,18 @@ jobs:
         run: docker run --rm koalaman/shellcheck:stable --version
       - name: Run ShellCheck
         run: docker run --rm --volume "$PWD:/mnt:ro" --workdir /mnt koalaman/shellcheck:stable bin/incremental-git-filterbranch test/bootstrap test/run-tests test/tests/*
+  shfmt:
+    name: shfmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Pull latest shfmt
+        run: docker pull --quiet mvdan/shfmt:v3
+      - name: Show shfmt version
+        run: docker run --rm mvdan/shfmt:v3 --version
+      - name: Run shfmt
+        run: docker run --rm --volume "$PWD:/mnt:ro" --workdir /mnt mvdan/shfmt:v3 --diff bin/incremental-git-filterbranch test/bootstrap test/run-tests test/tests/*
   tests:
     name: Tests (git ${{ matrix.git-version }})
     runs-on: ubuntu-latest

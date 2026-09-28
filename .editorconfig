@@ -1,0 +1,25 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{json,md,yml}]
+indent_style = space
+
+[*.{json,md}]
+indent_size = 4
+
+[*.yml]
+indent_size = 2
+
+[.vscode/*.json]
+indent_style = tab
+
+[{bin/**,test/**}]
+indent_style = tab
+# Options for shfmt
+shell_variant = posix
+switch_case_indent = true
