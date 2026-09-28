@@ -1,0 +1,83 @@
+#!/bin/sh
+
+# The commits of a merged branch may already be in the map of the translated commits, since that branch has been previously processed.
+# When looking for the translated commit that's nearest to a commit that's not rewritten, we must not stop at those commits:
+# the other merged line of development may contain newer translated commits.
+# In this test the commits of the merged branch are more recent than the commits they are merged with.
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master side' --tags-plan all -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+# $1: the name of the file to be created
+# $2: the commit message
+# $3: the commit date
+addCommit() {
+	touch "${DIR_SOURCE}/${1}"
+	git -C "${DIR_SOURCE}" add --all
+	GIT_AUTHOR_DATE="${3}" GIT_COMMITTER_DATE="${3}" git -C "${DIR_SOURCE}" commit --quiet --message "${2}"
+}
+
+# $1: the ref to be checked
+# $2: the message of the expected commit
+checkCommit() {
+	printf 'Checking commit of %s\n' "${1}"
+	actualCommit="$(git -C "${DIR_DESTINATION}" log -1 --format=%s "${1}^{commit}")"
+	if [ "${actualCommit}" != "${2}" ]; then
+		printf 'Expected commit of %s: %s\nResulting commit of %s: %s\n' "${1}" "${2}" "${1}" "${actualCommit}" >&2
+		exit 1
+	fi
+}
+
+# $1: the expected commits
+checkCommits() {
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format=%s refs/heads/master | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualCommits}" != "${1}" ]; then
+		printf 'Expected commits: %s\nResulting commits: %s\n' "${1}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+echo 'A branch without changes in the filtered directory is processed'
+git -C "${DIR_SOURCE}" checkout --quiet -b side
+addCommit rootfile4 'Commit #9' '2030-01-02T00:00:00'
+runMain
+checkCommits 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+echo 'That branch is merged after a change in the filtered directory, in the same run of the tagged commit'
+git -C "${DIR_SOURCE}" checkout --quiet master
+addCommit subdir/subfile4 'Commit #10' '2030-01-01T00:00:00'
+git -C "${DIR_SOURCE}" merge --quiet --no-ff -m 'Merge #1' side
+addCommit rootfile5 'Commit #11' '2030-01-03T00:00:00'
+git -C "${DIR_SOURCE}" tag tag-05
+addCommit rootfile6 'Commit #12' '2030-01-04T00:00:00'
+runMain
+checkCommits 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #10'
+checkCommit refs/tags/tag-05 'Commit #10'
+
+echo 'That branch is merged in a run without changes in the filtered directory'
+git -C "${DIR_SOURCE}" checkout --quiet side
+addCommit rootfile7 'Commit #13' '2030-01-06T00:00:00'
+git -C "${DIR_SOURCE}" checkout --quiet master
+addCommit subdir/subfile5 'Commit #14' '2030-01-05T00:00:00'
+runMain
+checkCommits 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #10 Commit #14'
+git -C "${DIR_SOURCE}" merge --quiet --no-ff -m 'Merge #2' side
+addCommit rootfile8 'Commit #15' '2030-01-07T00:00:00'
+git -C "${DIR_SOURCE}" tag tag-06
+addCommit rootfile9 'Commit #16' '2030-01-08T00:00:00'
+runMain
+checkCommits 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #10 Commit #14'
+checkCommit refs/tags/tag-05 'Commit #10'
+checkCommit refs/tags/tag-06 'Commit #14'
+
+echo 'A commit in the filtered directory after the merges'
+addCommit subdir/subfile6 'Commit #17' '2030-01-09T00:00:00'
+runMain
+checkCommits 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #10 Commit #14 Commit #17'
