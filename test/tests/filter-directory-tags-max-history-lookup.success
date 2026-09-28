@@ -1,0 +1,22 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+# $1: the value of the --tags-max-history-lookup option
+# $2: the expected tags
+checkTags() {
+	initializeRepositories
+
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-blacklist 'slave' --tags-plan all --tags-max-history-lookup "${1}" -- "${DIR_SOURCE}" '--subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+	echo 'Fetching tags'
+	actualTags="$(getTagList "${DIR_DESTINATION}")"
+	if [ "${actualTags}" != "${2}" ]; then
+		printf 'Expected tags with a max history lookup of %s: %s\nResulting tags: %s\n' "${1}" "${2}" "${actualTags}" >&2
+		exit 1
+	fi
+}
+
+# tag-03 is associated to a commit outside the filtered directory: its parent is the nearest commit in the filtered directory
+checkTags 1 'tag-02'
+checkTags 2 'tag-02 tag-03'

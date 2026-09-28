@@ -191,7 +191,7 @@ readParameters() {
 				if [ $# -lt 2 ]; then
 					usage 'Not enough arguments'
 				fi
-				PROCESS_TAGS_MAXHISTORYLOOKUP="${BRANCH_BLACKLIST} ${2}"
+				PROCESS_TAGS_MAXHISTORYLOOKUP="${2}"
 				if ! [ "${PROCESS_TAGS_MAXHISTORYLOOKUP}" -eq "${PROCESS_TAGS_MAXHISTORYLOOKUP}" ] 2>/dev/null; then
 					usage "Value of ${readParameters_currentArgument} should be numeric"
 				fi
