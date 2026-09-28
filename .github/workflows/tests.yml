@@ -18,11 +18,65 @@ permissions:
 
 jobs:
   tests:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }}, git ${{ matrix.git-version || 'preinstalled' }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+          - os: ubuntu-24.04
+          - os: ubuntu-26.04
+          - os: ubuntu-24.04
+            git-version: 2.16.6
+          - os: ubuntu-24.04
+            git-version: 2.49.1
+          - os: ubuntu-24.04
+            git-version: ppa
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Install git from PPA
+        if: matrix.git-version == 'ppa'
+        run: |
+          sudo add-apt-repository --yes ppa:git-core/ppa
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --quiet git
+      - name: Configure git build
+        if: matrix.git-version && matrix.git-version != 'ppa'
+        id: git-build
+        run: |
+          echo "dir=$HOME/git-${{ matrix.git-version }}" >>"$GITHUB_OUTPUT"
+          echo "cache-key=git-${{ matrix.git-version }}-$ImageOS-$RUNNER_ARCH-v1" >>"$GITHUB_OUTPUT"
+      - name: Restore git from cache
+        if: steps.git-build.outputs.dir
+        id: git-cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.git-build.outputs.dir }}
+          key: ${{ steps.git-build.outputs.cache-key }}
+      - name: Build git
+        if: steps.git-build.outputs.dir && steps.git-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        env:
+          # We only work with local repositories, so we can skip most of the optional features
+          NO_CURL: 1
+          NO_EXPAT: 1
+          NO_GETTEXT: 1
+          NO_OPENSSL: 1
+          NO_PYTHON: 1
+          NO_RUST: 1
+          NO_TCLTK: 1
+        run: |
+          sudo apt-get update --quiet
+          sudo apt-get install --yes --quiet --no-install-recommends gcc libc6-dev make perl xz-utils zlib1g-dev
+          curl --silent --show-error --fail --location --output git.tar.xz "https://www.kernel.org/pub/software/scm/git/git-${{ matrix.git-version }}.tar.xz"
+          tar --extract --file=git.tar.xz
+          cd "git-${{ matrix.git-version }}"
+          make "-j$(nproc)" "prefix=${{ steps.git-build.outputs.dir }}" install
+      - name: Use built git
+        if: steps.git-build.outputs.dir
+        run: echo "${{ steps.git-build.outputs.dir }}/bin" >>"$GITHUB_PATH"
       - name: Show git version
         run: git --version
       - name: Configure git identity
