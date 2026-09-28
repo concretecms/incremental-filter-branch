@@ -588,6 +588,11 @@ prepareWorkerRepository() {
 		fi
 	fi
 	git -C "${WORKER_REPOSITORY_DIR}" symbolic-ref HEAD refs/none
+	# We need an identity to create the commits that store the state of git filter-branch:
+	# let's use our own identity, so that we don't rely on the configuration of git
+	# (the author and the committer of the rewritten commits are not affected by this)
+	git -C "${WORKER_REPOSITORY_DIR}" config user.name 'incremental-git-filterbranch'
+	git -C "${WORKER_REPOSITORY_DIR}" config user.email 'incremental-git-filterbranch@example.com'
 }
 
 # Process a branch, fetching it from the mirror of the source repository.
