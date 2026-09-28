@@ -1,0 +1,5 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap"
+
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" -- "${DIR_SOURCE}" '--msg-filter "cat' "${DIR_DESTINATION}"
