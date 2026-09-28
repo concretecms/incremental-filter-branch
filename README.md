@@ -15,7 +15,7 @@ the first time `filter-branch` still requires some time, but following calls can
 
 - git 2.16.0 or newer (on macOS: git 2.17.0 or newer)
 - a POSIX shell
-- common commands (`sed`, `grep`, `cut`, `sort`, `tr`, `mktemp`, ...)
+- common commands (`sed`, `grep`, `awk`, `cut`, `sort`, `tr`, `mktemp`, ...)
 - `md5sum` (or `md5`)
 - `flock` (optional: see the `--no-lock` option)
 
@@ -75,8 +75,9 @@ You can control which tags are created in the destination repository with the `-
 - `visited` (default): only the tags associated to the commits rewritten by the filter.
   For instance, when extracting a directory, the tags associated to commits that don't change that directory are skipped.
 - `all`: all the tags.
-  The tags associated to commits that are not rewritten by the filter are associated to the nearest rewritten commit
-  (see also the `--tags-max-history-lookup` option).
+  The tags associated to commits that are not rewritten by the filter are associated to the nearest rewritten commit.
+  You can limit how far that commit can be with the `--tags-max-history-lookup` option
+  (1: only the commit of the tag, 2: the commit of the tag and its parents, and so on).
 - `none`: no tags at all.
 
 
