@@ -36,7 +36,7 @@ initializeRepositories () {
 	rm -rf "${DIR_TEMP}"
 	mkdir "${DIR_TEMP}"
 
-	git init --quiet "${DIR_SOURCE}"
+	git -c init.defaultBranch=master init --quiet "${DIR_SOURCE}"
 	git -C "${DIR_SOURCE}" config --local user.email 'email@example.com'
 	git -C "${DIR_SOURCE}" config --local user.name 'John Doe'
 	mkdir "${DIR_SOURCE}/subdir"
