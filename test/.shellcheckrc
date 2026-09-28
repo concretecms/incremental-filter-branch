@@ -1,0 +1,4 @@
+# The bootstrap script is included with a path calculated at runtime
+disable=SC1091
+# BIN_MAIN_OPTIONS must be split in multiple arguments
+disable=SC2086

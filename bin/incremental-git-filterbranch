@@ -45,7 +45,7 @@ ${0} [-h | --help] [--workdir <workdirpath>]
 	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
 	[--prune-branches] [--prune-tags]
-	[--no-hardlinks] [--no-atomic] [--no-lock] [--]
+	[--no-atomic] [--no-lock] [--]
 	<sourcerepository> <filter> <destinationrepository>
 	Apply git filter-branch in an incremental way
 
@@ -84,8 +84,6 @@ Where:
 --prune-tags
 	delete tags in the destination repository that do not exist anymore in the source repository,
 	or that do not satisfy the whitelist/blacklist
---no-hardlinks
-	Do not create hard links (useful for file systems that don't support it).
 --no-atomic
 	Do not use an atomic transaction when pushing to the destination repository.
 --no-lock
@@ -117,7 +115,6 @@ readParameters () {
 	TAG_BLACKLIST=''
 	TAGS_PLAN='visited'
 	PROCESS_TAGS_MAXHISTORYLOOKUP=50
-	NO_HARDLINKS=''
 	ATOMIC='--atomic'
 	NO_LOCK=''
 	PRUNE_BRANCHES=0
@@ -224,10 +221,6 @@ readParameters () {
 				;;
 			--prune-tags)
 				PRUNE_TAGS=1
-				shift 1
-				;;
-			--no-hardlinks)
-				NO_HARDLINKS='--no-hardlinks'
 				shift 1
 				;;
 			--no-atomic)
@@ -363,11 +356,11 @@ checkEnvironment () {
 			die "The required ${checkEnvironment_command} command is not available."
 		fi
 	done
-	if ! $(echo '' | sed -E '' 2>/dev/null)
+	if ! echo '' | sed -E '' >/dev/null 2>&1
 	then
 		die 'The sed command does not support extended regular expressions.'
 	fi
-	if ! $(echo '' | grep -E '' 2>/dev/null)
+	if ! echo '' | grep -E '' >/dev/null 2>&1
 	then
 		die 'The grep command does not support extended regular expressions.'
 	fi
@@ -659,7 +652,7 @@ processBranch () {
 			cat "${WORKER_REPOSITORY_DIR}.stderr" >&2
 			if test ${processBranch_rc} -eq 1
 			then
-				if test -n "$(cat "${WORKER_REPOSITORY_DIR}.stderr" | grep -E '^Found nothing to rewrite$')"
+				if grep -Eq '^Found nothing to rewrite$' "${WORKER_REPOSITORY_DIR}.stderr"
 				then
 					processBranch_rc=2
 				fi
@@ -724,7 +717,7 @@ processNotConvertedTag () {
 	do
 		if processNotConvertedTag_mappedCommit="$(grep -E "^${processNotConvertedTag_commitHash}:" "${WORKER_REPOSITORY_DIR}.map")"
 		then
-			processNotConvertedTag_translatedCommit="${processNotConvertedTag_mappedCommit#${processNotConvertedTag_commitHash}:}"
+			processNotConvertedTag_translatedCommit="${processNotConvertedTag_mappedCommit#"${processNotConvertedTag_commitHash}":}"
 			break
 		fi
 	done

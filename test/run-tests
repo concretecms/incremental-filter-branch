@@ -1,5 +1,6 @@
 #!/bin/sh
 
+# shellcheck disable=SC2034
 IS_TEST_CASE=0
 if ! . "$(cd -- "$(dirname -- "$0")" && pwd -P)/bootstrap"
 then
