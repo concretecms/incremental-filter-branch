@@ -90,6 +90,8 @@ sourcerepository
 	The URL or path to the source repository.
 filter
 	The list of parameters to be passed to the git filter-branch command.
+	It's parsed with the syntax of the shell, so you can use quotes to specify arguments containing spaces.
+	For instance: --prune-empty --msg-filter 'sed s/foo/bar/'
 destinationrepository
 	The URL or path to the destination repository.
 
@@ -247,8 +249,10 @@ readParameters() {
 	if [ -z "${FILTER}" ]; then
 		die 'The filter is empty.'
 	fi
-	# shellcheck disable=SC2086
-	checkFilter ${FILTER}
+	if ! (eval "set -- ${FILTER}") >/dev/null 2>&1; then
+		die 'Invalid syntax in filter (it can not be parsed)'
+	fi
+	eval "checkFilter ${FILTER}"
 	DESTINATION_REPOSITORY_URL="${3}"
 	if [ -z "${DESTINATION_REPOSITORY_URL}" ]; then
 		die 'The destination repository location is empty.'
@@ -627,17 +631,7 @@ processBranch() {
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		processBranch_preparedState="$(prepareState "${processBranch_range}")"
 		set +o errexit
-		# shellcheck disable=SC2086
-		FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
-			${FILTER} \
-			--remap-to-ancestor \
-			--tag-name-filter "${processBranch_tagNameFilter}" \
-			-d "${WORKER_REPOSITORY_DIR}.filter-branch" \
-			--original "refs/filter-branch/originals/${1}" \
-			--state-branch "refs/filter-branch/state" \
-			--force \
-			-- "${processBranch_range}" \
-			2>"${WORKER_REPOSITORY_DIR}.stderr"
+		runFilterBranch "${1}" "${processBranch_range}" "${processBranch_tagNameFilter}"
 		processBranch_rc=$?
 		set -o errexit
 		restoreState "${processBranch_preparedState}"
@@ -681,6 +675,33 @@ processBranch() {
 		echo "  - storing state"
 		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${1}" FETCH_HEAD
 	fi
+}
+
+# Run git filter-branch, saving its standard error to the file named "${WORKER_REPOSITORY_DIR}.stderr".
+#
+# Arguments:
+#   $1: the name of the branch to work with
+#   $2: the range of commits to be processed
+#   $3: the filter to be used for the name of the tags
+#
+# Return:
+#   the return code of git filter-branch
+runFilterBranch() {
+	runFilterBranch_branch="${1}"
+	runFilterBranch_range="${2}"
+	runFilterBranch_tagNameFilter="${3}"
+	# The filter uses the syntax of the shell, so that it can contain quoted arguments
+	eval "set -- ${FILTER}"
+	FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
+		"$@" \
+		--remap-to-ancestor \
+		--tag-name-filter "${runFilterBranch_tagNameFilter}" \
+		-d "${WORKER_REPOSITORY_DIR}.filter-branch" \
+		--original "refs/filter-branch/originals/${runFilterBranch_branch}" \
+		--state-branch "refs/filter-branch/state" \
+		--force \
+		-- "${runFilterBranch_range}" \
+		2>"${WORKER_REPOSITORY_DIR}.stderr"
 }
 
 # Prepare the state branch before running filter-branch, by temporarily storing a new map in it:
