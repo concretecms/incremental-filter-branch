@@ -652,6 +652,16 @@ processBranch() {
 		if [ ${processBranch_rc} -ne 0 ] && [ ${processBranch_rc} -ne 2 ]; then
 			die 'git failed'
 		fi
+		if [ ${processBranch_rc} -eq 2 ]; then
+			# filter-branch didn't rewrite the result branch: it still points to a commit of the source repository
+			echo '  - remapping branch'
+			processBranch_translatedCommit="$(getNearestTranslatedCommit "${processBranch_fetchHead}" '')"
+			if [ -z "${processBranch_translatedCommit}" ]; then
+				git -C "${WORKER_REPOSITORY_DIR}" update-ref -d "refs/heads/filter-branch/result/${1}"
+			else
+				git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${1}" "${processBranch_translatedCommit}"
+			fi
+		fi
 		if [ "${TAGS_PLAN}" = 'all' ] && [ -n "${processBranch_tags}" ]; then
 			if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"; then
 				processBranchTag_availableTags=''
@@ -704,6 +714,29 @@ restoreState() {
 	fi
 }
 
+# Print the SHA-1 hash of the translated commit that's nearest to a commit of the source repository.
+#
+# Arguments:
+#   $1: the SHA-1 hash of the source commit
+#   $2: the maximum number of commits to be inspected (empty for no limits)
+#
+# Output:
+#   The SHA-1 of the translated commit, or nothing if it can't be found
+getNearestTranslatedCommit() {
+	if [ ! -f "${WORKER_REPOSITORY_DIR}.map" ]; then
+		if ! git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map >"${WORKER_REPOSITORY_DIR}.map" 2>/dev/null; then
+			rm -f "${WORKER_REPOSITORY_DIR}.map"
+			return 0
+		fi
+	fi
+	for getNearestTranslatedCommit_commitHash in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --date-order ${2:+--max-count="${2}"} "${1}"); do
+		if getNearestTranslatedCommit_mappedCommit="$(grep -E "^${getNearestTranslatedCommit_commitHash}:." "${WORKER_REPOSITORY_DIR}.map")"; then
+			printf '%s' "${getNearestTranslatedCommit_mappedCommit#"${getNearestTranslatedCommit_commitHash}":}"
+			return 0
+		fi
+	done
+}
+
 # Print the SHA-1 hash of the tag of the work repository (if found).
 #
 # Arguments:
@@ -725,16 +758,7 @@ processNotConvertedTag() {
 	if [ -z "${processNotConvertedTag_tagOriginalHash}" ]; then
 		die "$(printf 'failed to get hash of tag %s' "${1}")"
 	fi
-	if [ ! -f "${WORKER_REPOSITORY_DIR}.map" ]; then
-		git -C "${WORKER_REPOSITORY_DIR}" show refs/filter-branch/state:filter.map >"${WORKER_REPOSITORY_DIR}.map"
-	fi
-	processNotConvertedTag_translatedCommit=''
-	for processNotConvertedTag_commitHash in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --date-order --max-count="${PROCESS_TAGS_MAXHISTORYLOOKUP}" "${processNotConvertedTag_tagOriginalHash}"); do
-		if processNotConvertedTag_mappedCommit="$(grep -E "^${processNotConvertedTag_commitHash}:" "${WORKER_REPOSITORY_DIR}.map")"; then
-			processNotConvertedTag_translatedCommit="${processNotConvertedTag_mappedCommit#"${processNotConvertedTag_commitHash}":}"
-			break
-		fi
-	done
+	processNotConvertedTag_translatedCommit="$(getNearestTranslatedCommit "${processNotConvertedTag_tagOriginalHash}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")"
 	if [ -z "${processNotConvertedTag_translatedCommit}" ]; then
 		printf 'nearest commit not found\n' >&2
 	else
@@ -780,7 +804,9 @@ processBranches() {
 	for processBranches_branch in ${WORK_BRANCHES}; do
 		echo "# Processing branch ${processBranches_branch}"
 		processBranch "${processBranches_branch}"
-		processBranches_pushRefSpec="${processBranches_pushRefSpec} filter-branch/result/${processBranches_branch}:${processBranches_branch}"
+		if git -C "${WORKER_REPOSITORY_DIR}" show-ref --quiet --verify "refs/heads/filter-branch/result/${processBranches_branch}"; then
+			processBranches_pushRefSpec="${processBranches_pushRefSpec} filter-branch/result/${processBranches_branch}:${processBranches_branch}"
+		fi
 	done
 	if [ -n "${TAGS_PLAN}" ]; then
 		echo '# Listing source tags'
