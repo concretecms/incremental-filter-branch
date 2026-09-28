@@ -573,7 +573,7 @@ prepareWorkerRepository () {
 	then
 		echo '# Creating working repository'
 		rm -rf "${WORKER_REPOSITORY_DIR}"
-		git init --bare "${WORKER_REPOSITORY_DIR}"
+		git -c init.defaultBranch=master init --bare "${WORKER_REPOSITORY_DIR}"
 		echo '# Adding mirror source repository to working repository'
 		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add source "${SOURCE_REPOSITORY_DIR}"
 		then
@@ -642,7 +642,7 @@ processBranch () {
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
 		set +o errexit
 		# shellcheck disable=SC2086
-		git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
+		 FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
 			${FILTER} \
 			--remap-to-ancestor \
 			--tag-name-filter "${processBranch_tagNameFilter}" \
