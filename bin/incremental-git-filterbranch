@@ -74,7 +74,7 @@ Where:
 	- none: do not process any tag
 	- all: process all tags
 --tags-max-history-lookup
-	limit the depth when looking for best matched filtered commit when --tags-plan is 'all'.
+	limit the depth when looking for best matched filtered commit.
 	By default this value is 50.
 --prune-branches
 	delete branches in the destination repository that do not exist anymore in the source repository,
@@ -663,6 +663,9 @@ processBranch() {
 				git -C "${WORKER_REPOSITORY_DIR}" branch --force "filter-branch/result/${1}" "${processBranch_translatedCommit}"
 			fi
 		fi
+		if [ "${TAGS_PLAN}" = 'visited' ]; then
+			removeNotVisitedTags
+		fi
 		if [ "${TAGS_PLAN}" = 'all' ] && [ -n "${processBranch_tags}" ]; then
 			if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"; then
 				processBranchTag_availableTags=''
@@ -756,6 +759,41 @@ getNearestTranslatedCommit() {
 			return 0
 		fi
 	done
+}
+
+# Remove the converted tags associated to commits that haven't been rewritten by the filter.
+# git filter-branch converts every tag associated to the commits listed in its map, but the map may also contain
+# commits that haven't been rewritten (for example the last commit of a branch).
+removeNotVisitedTags() {
+	for removeNotVisitedTags_convertedTag in $(git -C "${WORKER_REPOSITORY_DIR}" tag --list 'filter-branch/converted-tags/*'); do
+		removeNotVisitedTags_commit="$(getWorkingTagHash "${removeNotVisitedTags_convertedTag#filter-branch/converted-tags/}")"
+		if [ -n "${removeNotVisitedTags_commit}" ] && ! isCommitVisited "${removeNotVisitedTags_commit}"; then
+			printf '  - skipping tag %s (its commit has not been rewritten)\n' "${removeNotVisitedTags_convertedTag#filter-branch/converted-tags/}"
+			git -C "${WORKER_REPOSITORY_DIR}" tag -d "${removeNotVisitedTags_convertedTag}" >/dev/null
+		fi
+	done
+}
+
+# Check if a commit of the source repository has been rewritten by the filter.
+# A commit that has not been rewritten is not in the map, or it's mapped to the same translated commit of one of its ancestors.
+#
+# Arguments:
+#   $1: the SHA-1 hash of the source commit
+#
+# Return:
+#   0 (true): if the commit has been rewritten
+#   1 (false): if the commit has not been rewritten
+isCommitVisited() {
+	isCommitVisited_translatedCommit="$(getNearestTranslatedCommit "${1}" 1)"
+	if [ -z "${isCommitVisited_translatedCommit}" ]; then
+		return 1
+	fi
+	for isCommitVisited_parent in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents --max-count=1 "${1}" | cut -s -d ' ' -f 2-); do
+		if [ "$(getNearestTranslatedCommit "${isCommitVisited_parent}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")" = "${isCommitVisited_translatedCommit}" ]; then
+			return 1
+		fi
+	done
+	return 0
 }
 
 # Print the SHA-1 hash of the tag of the work repository (if found).
