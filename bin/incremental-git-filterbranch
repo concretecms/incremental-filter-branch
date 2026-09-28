@@ -316,7 +316,7 @@ checkEnvironment() {
 			die 'The flock command is not available. You may want to use --no-lock option to avoid using it (but no concurrency check will be performed).'
 		fi
 	fi
-	for checkEnvironment_command in git sed grep; do
+	for checkEnvironment_command in git sed grep mktemp; do
 		if ! command -v "${checkEnvironment_command}" >/dev/null; then
 			die "The required ${checkEnvironment_command} command is not available."
 		fi
@@ -350,7 +350,78 @@ initializeEnvironment() {
 	WORK_DIRECTORY=$(absolutizePath "${WORK_DIRECTORY}")
 	SOURCE_REPOSITORY_DIR=${WORK_DIRECTORY}/source-$(getMD5 "${SOURCE_REPOSITORY_URL}")
 	WORKER_REPOSITORY_DIR=${WORK_DIRECTORY}/worker-$(getMD5 "${SOURCE_REPOSITORY_URL}${DESTINATION_REPOSITORY_URL}")
+	detectSwappedStateBug
 }
+
+# Check if git filter-branch swaps the original and the rewritten commits when loading the map from the state branch
+# (that's a bug introduced in git 2.50.0), and store the result in the SWAPPED_STATE_BUG variable.
+# We check the actual behavior of git, by using a temporary repository.
+detectSwappedStateBug() {
+	detectSwappedStateBug_dir="$(mktemp -d "${WORK_DIRECTORY}/probe-XXXXXX")" || die 'Failed to create a temporary directory'
+	set +o errexit
+	detectSwappedStateBug_result="$(probeSwappedStateBug "${detectSwappedStateBug_dir}" 2>&1)"
+	set -o errexit
+	rm -rf "${detectSwappedStateBug_dir}"
+	case "${detectSwappedStateBug_result}" in
+		ok)
+			SWAPPED_STATE_BUG=0
+			;;
+		swapped)
+			SWAPPED_STATE_BUG=1
+			;;
+		*)
+			die "$(printf 'Failed to check how git filter-branch loads its state:\n%s' "${detectSwappedStateBug_result}")"
+			;;
+	esac
+}
+
+# Run git filter-branch in a temporary repository, with a state that maps the parent of the commit to be rewritten to another commit.
+#
+# Arguments:
+#   $1: the path of an empty directory
+#
+# Output:
+#   ok: if the state is loaded correctly
+#   swapped: if the original and the rewritten commits are swapped
+probeSwappedStateBug() (
+	set -o errexit
+	# The identity is required to create commits
+	GIT_AUTHOR_NAME='incremental-git-filterbranch'
+	GIT_AUTHOR_EMAIL='incremental-git-filterbranch@example.com'
+	GIT_COMMITTER_NAME="${GIT_AUTHOR_NAME}"
+	GIT_COMMITTER_EMAIL="${GIT_AUTHOR_EMAIL}"
+	export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+	git -c init.defaultBranch=master init --quiet --bare "${1}"
+	probeSwappedStateBug_tree="$(git -C "${1}" mktree </dev/null)"
+	probeSwappedStateBug_parent="$(git -C "${1}" commit-tree -m 'Parent' "${probeSwappedStateBug_tree}")"
+	probeSwappedStateBug_child="$(git -C "${1}" commit-tree -m 'Child' -p "${probeSwappedStateBug_parent}" "${probeSwappedStateBug_tree}")"
+	probeSwappedStateBug_other="$(git -C "${1}" commit-tree -m 'Other' "${probeSwappedStateBug_tree}")"
+	probeSwappedStateBug_blob="$(printf '%s:%s\n' "${probeSwappedStateBug_parent}" "${probeSwappedStateBug_other}" | git -C "${1}" hash-object -w --stdin)"
+	probeSwappedStateBug_tree="$(printf '100644 blob %s\tfilter.map\n' "${probeSwappedStateBug_blob}" | git -C "${1}" mktree)"
+	git -C "${1}" update-ref refs/filter-branch/state "$(git -C "${1}" commit-tree -m 'State' "${probeSwappedStateBug_tree}")"
+	git -C "${1}" update-ref refs/heads/probe "${probeSwappedStateBug_child}"
+	FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${1}" filter-branch \
+		--msg-filter cat \
+		-d "${1}/filter-branch" \
+		--state-branch refs/filter-branch/state \
+		-- "${probeSwappedStateBug_parent}..refs/heads/probe" \
+		>"${1}/filter-branch.log" 2>&1 || {
+		cat "${1}/filter-branch.log"
+		exit 1
+	}
+	case "$(git -C "${1}" rev-parse 'refs/heads/probe^')" in
+		"${probeSwappedStateBug_other}")
+			echo 'ok'
+			;;
+		"${probeSwappedStateBug_parent}")
+			echo 'swapped'
+			;;
+		*)
+			cat "${1}/filter-branch.log"
+			echo 'Unexpected parent of the rewritten commit'
+			;;
+	esac
+)
 
 # Acquire a lock (if allowed by options): we'll return from this function once the lock has been acquired
 acquireLock() {
@@ -554,6 +625,7 @@ processBranch() {
 			processBranch_tagNameFilter='read -r tag; printf "filter-branch/converted-tags/%s" "${tag}"'
 		fi
 		rm -rf "${WORKER_REPOSITORY_DIR}.map"
+		processBranch_swappedState="$(swapState)"
 		set +o errexit
 		# shellcheck disable=SC2086
 		FILTER_BRANCH_SQUELCH_WARNING=1 git -C "${WORKER_REPOSITORY_DIR}" filter-branch \
@@ -568,6 +640,7 @@ processBranch() {
 			2>"${WORKER_REPOSITORY_DIR}.stderr"
 		processBranch_rc=$?
 		set -o errexit
+		restoreState "${processBranch_swappedState}"
 		if [ -s "${WORKER_REPOSITORY_DIR}.stderr" ]; then
 			cat "${WORKER_REPOSITORY_DIR}.stderr" >&2
 			if [ ${processBranch_rc} -eq 1 ]; then
@@ -593,6 +666,41 @@ processBranch() {
 		fi
 		echo "  - storing state"
 		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${1}" FETCH_HEAD
+	fi
+}
+
+# Work around the bug of git that swaps the original and the rewritten commits when loading the map from the state branch
+# (see detectSwappedStateBug).
+# We temporarily store in the state branch a map with swapped commits.
+#
+# Output:
+#   Empty string if there's nothing to be restored after running filter-branch
+#   Otherwise: the original and the temporary SHA-1 of the state branch, separated by a colon
+swapState() {
+	if [ ${SWAPPED_STATE_BUG} -eq 0 ]; then
+		return 0
+	fi
+	swapState_original="$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)"
+	if [ -z "${swapState_original}" ]; then
+		return 0
+	fi
+	swapState_blob="$(git -C "${WORKER_REPOSITORY_DIR}" show "${swapState_original}:filter.map" | sed -E 's/^([^:]*):(.*)$/\2:\1/' | git -C "${WORKER_REPOSITORY_DIR}" hash-object -w --stdin)"
+	swapState_tree="$(printf '100644 blob %s\tfilter.map\n' "${swapState_blob}" | git -C "${WORKER_REPOSITORY_DIR}" mktree)"
+	swapState_swapped="$(git -C "${WORKER_REPOSITORY_DIR}" commit-tree -m 'Swap' -p "${swapState_original}" "${swapState_tree}")"
+	git -C "${WORKER_REPOSITORY_DIR}" update-ref refs/filter-branch/state "${swapState_swapped}"
+	printf '%s:%s' "${swapState_original}" "${swapState_swapped}"
+}
+
+# Restore the state branch if filter-branch didn't update it.
+#
+# Arguments:
+#   $1: the output of swapState
+restoreState() {
+	if [ -z "${1}" ]; then
+		return 0
+	fi
+	if [ "$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse --quiet --verify refs/filter-branch/state || true)" = "${1#*:}" ]; then
+		git -C "${WORKER_REPOSITORY_DIR}" update-ref refs/filter-branch/state "${1%:*}"
 	fi
 }
 
