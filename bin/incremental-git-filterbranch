@@ -625,6 +625,11 @@ processBranch() {
 	processBranch_fetchHead=$(git -C "${WORKER_REPOSITORY_DIR}" rev-parse FETCH_HEAD)
 	if [ "${processBranch_last}" = "${processBranch_fetchHead}" ]; then
 		echo '  - nothing new, skipping'
+		if [ -n "${TAGS_PLAN}" ]; then
+			# New tags may have been associated to already processed commits
+			rm -rf "${WORKER_REPOSITORY_DIR}.map"
+			processNotConvertedTags "$(getSourceRepositoryTagsInBranch "${1}")"
+		fi
 	else
 		echo '  - initializing filter'
 		rm -f "${WORKER_REPOSITORY_DIR}/refs/filter-branch/originals/${1}/refs/heads/filter-branch/result/${1}"
@@ -675,18 +680,7 @@ processBranch() {
 		if [ "${TAGS_PLAN}" = 'visited' ]; then
 			removeNotVisitedTags
 		fi
-		if [ "${TAGS_PLAN}" = 'all' ] && [ -n "${processBranch_tags}" ]; then
-			if ! processBranchTag_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"; then
-				processBranchTag_availableTags=''
-			fi
-			for processBranch_tag in ${processBranch_tags}; do
-				if ! itemInList "${processBranch_tag}" "${processBranchTag_availableTags}"; then
-					if stringPassesLists "${processBranch_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"; then
-						processNotConvertedTag "${processBranch_tag}"
-					fi
-				fi
-			done
-		fi
+		processNotConvertedTags "${processBranch_tags}"
 		echo "  - storing state"
 		git -C "${WORKER_REPOSITORY_DIR}" branch -f "filter-branch/filtered/${1}" FETCH_HEAD
 	fi
@@ -925,6 +919,35 @@ isCommitVisited() {
 #   The SHA-1 of the tag, or nothing if the tag does not exist
 getWorkingTagHash() {
 	git -C "${WORKER_REPOSITORY_DIR}" rev-list -n 1 "refs/tags/${1}" 2>/dev/null || true
+}
+
+# Process the tags that have not been converted by git filter-branch
+# (git filter-branch can't convert the tags associated to commits that it doesn't rewrite, and it doesn't convert any tag when it has nothing to rewrite).
+#
+# Arguments:
+#   $1: the list of the names of the tags of the source repository to be checked
+processNotConvertedTags() {
+	if [ -z "${TAGS_PLAN}" ] || [ -z "${1}" ]; then
+		return 0
+	fi
+	if ! processNotConvertedTags_availableTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag --list | grep -E '^filter-branch/converted-tags/' | sed -E 's:^filter-branch/converted-tags/::')"; then
+		processNotConvertedTags_availableTags=''
+	fi
+	for processNotConvertedTags_tag in ${1}; do
+		if itemInList "${processNotConvertedTags_tag}" "${processNotConvertedTags_availableTags}"; then
+			continue
+		fi
+		if ! stringPassesLists "${processNotConvertedTags_tag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"; then
+			continue
+		fi
+		if [ "${TAGS_PLAN}" = 'visited' ]; then
+			processNotConvertedTags_commit="$(getWorkingTagHash "${processNotConvertedTags_tag}")"
+			if [ -z "${processNotConvertedTags_commit}" ] || ! isCommitVisited "${processNotConvertedTags_commit}"; then
+				continue
+			fi
+		fi
+		processNotConvertedTag "${processNotConvertedTags_tag}"
+	done
 }
 
 # Tries to create a new translated tag, associating it to the nearest translated commit

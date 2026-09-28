@@ -1,0 +1,61 @@
+#!/bin/sh
+
+# Tags may be created after their commits have been processed (that's what usually happens when releasing a new version):
+# they must be converted even if there are no new commits.
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+# $1: the tags plan
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan "${1}" -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+# $1: the expected tags
+checkTags() {
+	echo 'Checking tags'
+	actualTags="$(getTagList "${DIR_DESTINATION}")"
+	if [ "${actualTags}" != "${1}" ]; then
+		printf 'Expected tags: %s\nResulting tags: %s\n' "${1}" "${actualTags}" >&2
+		exit 1
+	fi
+}
+
+# $1: the name of the tag
+# $2: the message of the expected commit
+checkTagCommit() {
+	printf 'Checking commit of %s\n' "${1}"
+	actualTagCommit="$(git -C "${DIR_DESTINATION}" log -1 --format=%s "refs/tags/${1}^{commit}")"
+	if [ "${actualTagCommit}" != "${2}" ]; then
+		printf 'Expected commit of %s: %s\nResulting commit of %s: %s\n' "${1}" "${2}" "${1}" "${actualTagCommit}" >&2
+		exit 1
+	fi
+}
+
+# $1: the message of the commit
+getSourceCommit() {
+	git -C "${DIR_SOURCE}" log -1 --format=%H --fixed-strings --grep="${1}" refs/heads/master
+}
+
+echo 'Tags plan: all'
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+runMain all
+checkTags 'tag-02 tag-03'
+# Commit #4b changes the filtered directory, Commit #6 doesn't change it (the previous commit that changes it is Commit #4)
+git -C "${DIR_SOURCE}" tag tag-05 "$(getSourceCommit 'Commit #4b')"
+git -C "${DIR_SOURCE}" tag tag-06 "$(getSourceCommit 'Commit #6')"
+runMain all
+checkTags 'tag-02 tag-03 tag-05 tag-06'
+checkTagCommit tag-05 'Commit #4b'
+checkTagCommit tag-06 'Commit #4'
+
+echo 'Tags plan: visited'
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+runMain visited
+checkTags 'tag-02'
+git -C "${DIR_SOURCE}" tag tag-05 "$(getSourceCommit 'Commit #4b')"
+git -C "${DIR_SOURCE}" tag tag-06 "$(getSourceCommit 'Commit #6')"
+runMain visited
+checkTags 'tag-02 tag-05'
+checkTagCommit tag-05 'Commit #4b'
