@@ -2,45 +2,38 @@
 
 # shellcheck disable=SC2034
 IS_TEST_CASE=0
-if ! . "$(cd -- "$(dirname -- "$0")" && pwd -P)/bootstrap"
-then
-	echo 'Unable to find bootstrap script'>&2
+if ! . "$(cd -- "$(dirname -- "$0")" && pwd -P)/bootstrap"; then
+	echo 'Unable to find bootstrap script' >&2
 	exit 1
 fi
 
 wantedFilter=''
-if test $# -eq 1
-then
+if [ $# -eq 1 ]; then
 	wantedFilter="${1}"
 else
 	wantedFilter=''
 fi
 
 someTestExecuted=0
-for testFile in "${DIR_TESTCASES}"/*
-do
+for testFile in "${DIR_TESTCASES}"/*; do
 	fullTestName="$(basename "${testFile}")"
 	testName=${fullTestName%.success}
-	if test "${fullTestName}" != "${testName}"
-	then
+	if [ "${fullTestName}" != "${testName}" ]; then
 		should='succeed'
 	else
 		testName=${fullTestName%.fail}
-		if test "${fullTestName}" != "${testName}"
-		then
+		if [ "${fullTestName}" != "${testName}" ]; then
 			should='fail'
 		else
 			printf 'Unrecognized test case: %s\n', "${fullTestName}"
 			exit 1
 		fi
 	fi
-	if test -z "${wantedFilter}" -o "${testName}" = "${wantedFilter}"
-	then
+	if [ -z "${wantedFilter}" ] || [ "${testName}" = "${wantedFilter}" ]; then
 		printf '%s should %s... ' "${testName}" "${should}"
 		case "${should}" in
 			'succeed')
-				if testOutput="$(${testFile} 2>&1)"
-				then
+				if testOutput="$(${testFile} 2>&1)"; then
 					printf 'ok.\n'
 				else
 					printf 'FAILED!\n'
@@ -49,8 +42,7 @@ do
 				fi
 				;;
 			'fail')
-				if testOutput="$(${testFile} 2>&1)"
-				then
+				if testOutput="$(${testFile} 2>&1)"; then
 					printf 'FAILED!\n'
 					printf '%s\n' "${testOutput}" >&2
 					exit 1
@@ -63,8 +55,7 @@ do
 	fi
 done
 
-if test ${someTestExecuted} -eq 0
-then
-	echo 'No test found!'>&2
+if [ ${someTestExecuted} -eq 0 ]; then
+	echo 'No test found!' >&2
 	exit 1
 fi
