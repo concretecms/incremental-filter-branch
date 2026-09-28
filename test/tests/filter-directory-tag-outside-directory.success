@@ -1,0 +1,74 @@
+#!/bin/sh
+
+# Scenario:
+# 1. the source repository is processed
+# 2. a new commit changes the filtered directory
+# 3. a following commit doesn't change the filtered directory
+# 4. that following commit is tagged
+# 5. a new incremental run processes both the commits
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan all -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+# $1: the name of the file to be created
+# $2: the commit message
+addCommit() {
+	touch "${DIR_SOURCE}/${1}"
+	git -C "${DIR_SOURCE}" add --all
+	git -C "${DIR_SOURCE}" commit --quiet --message "${2}"
+}
+
+# $1: the expected tags
+# $2: the expected commits
+checkDestination() {
+	echo 'Checking tags'
+	actualTags="$(getTagList "${DIR_DESTINATION}")"
+	if [ "${actualTags}" != "${1}" ]; then
+		printf 'Expected tags: %s\nResulting tags: %s\n' "${1}" "${actualTags}" >&2
+		exit 1
+	fi
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format=%s refs/heads/master | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualCommits}" != "${2}" ]; then
+		printf 'Expected commits: %s\nResulting commits: %s\n' "${2}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+# $1: the name of the tag
+# $2: the message of the expected commit
+checkTagCommit() {
+	printf 'Checking commit of %s\n' "${1}"
+	actualTagCommit="$(git -C "${DIR_DESTINATION}" log -1 --format=%s "refs/tags/${1}^{commit}")"
+	if [ "${actualTagCommit}" != "${2}" ]; then
+		printf 'Expected commit of %s: %s\nResulting commit of %s: %s\n' "${1}" "${2}" "${1}" "${actualTagCommit}" >&2
+		exit 1
+	fi
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+runMain
+checkDestination 'tag-02 tag-03' 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+echo 'The tagged commit is the last one'
+addCommit subdir/subfile4 'Commit #9'
+addCommit rootfile4 'Commit #10'
+git -C "${DIR_SOURCE}" tag tag-05
+runMain
+checkDestination 'tag-02 tag-03 tag-05' 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #9'
+checkTagCommit tag-05 'Commit #9'
+
+echo 'The tagged commit is not the last one'
+addCommit subdir/subfile5 'Commit #11'
+addCommit rootfile5 'Commit #12'
+git -C "${DIR_SOURCE}" tag tag-06
+addCommit rootfile6 'Commit #13'
+runMain
+checkDestination 'tag-02 tag-03 tag-05 tag-06' 'Commit #2 Commit #3 Commit #4 Commit #4b Commit #9 Commit #11'
+checkTagCommit tag-05 'Commit #9'
+checkTagCommit tag-06 'Commit #11'
