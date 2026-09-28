@@ -1,0 +1,56 @@
+#!/bin/sh
+
+# Scenario:
+# 1. the source repository is processed
+# 2. a new commit doesn't change the filtered directory
+# 3. that commit is tagged
+# 4. a new incremental run is performed (the filter has nothing to rewrite)
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+runMain() {
+	"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' --tags-plan all -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+}
+
+checkDestination() {
+	echo 'Checking tags'
+	actualTags="$(getTagList "${DIR_DESTINATION}")"
+	if [ "${actualTags}" != "${1}" ]; then
+		printf 'Expected tags: %s\nResulting tags: %s\n' "${1}" "${actualTags}" >&2
+		exit 1
+	fi
+	echo 'Checking files'
+	actualFiles="$(git -C "${DIR_DESTINATION}" ls-tree -r --name-only refs/heads/master | sort -b | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualFiles}" != "${2}" ]; then
+		printf 'Expected files: %s\nResulting files: %s\n' "${2}" "${actualFiles}" >&2
+		exit 1
+	fi
+	echo 'Checking commits'
+	actualCommits="$(git -C "${DIR_DESTINATION}" log --reverse --format=%s refs/heads/master | tr '\n' ' ' | sed -E 's:^ | $::g')"
+	if [ "${actualCommits}" != "${3}" ]; then
+		printf 'Expected commits: %s\nResulting commits: %s\n' "${3}" "${actualCommits}" >&2
+		exit 1
+	fi
+}
+
+initializeRepositories
+git -C "${DIR_SOURCE}" checkout --quiet master
+
+runMain
+checkDestination 'tag-02 tag-03' 'subfile1 subfile2 subfile3 subfile3b' 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+touch "${DIR_SOURCE}/rootfile4"
+git -C "${DIR_SOURCE}" add --all
+git -C "${DIR_SOURCE}" commit --quiet --message 'Commit #9'
+git -C "${DIR_SOURCE}" tag tag-05
+
+runMain
+checkDestination 'tag-02 tag-03 tag-05' 'subfile1 subfile2 subfile3 subfile3b' 'Commit #2 Commit #3 Commit #4 Commit #4b'
+
+echo 'Checking new tag'
+expectedTagCommit="$(git -C "${DIR_DESTINATION}" rev-parse refs/heads/master)"
+actualTagCommit="$(git -C "${DIR_DESTINATION}" rev-parse 'refs/tags/tag-05^{commit}')"
+if [ "${actualTagCommit}" != "${expectedTagCommit}" ]; then
+	printf 'Expected commit of the new tag: %s\nResulting commit of the new tag: %s\n' "${expectedTagCommit}" "${actualTagCommit}" >&2
+	exit 1
+fi
