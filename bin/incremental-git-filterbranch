@@ -74,7 +74,8 @@ Where:
 	- none: do not process any tag
 	- all: process all tags
 --tags-max-history-lookup
-	limit the depth when looking for best matched filtered commit.
+	limit the depth when looking for best matched filtered commit
+	(1: only the commit of the tag, 2: the commit of the tag and its parents, and so on).
 	By default this value is 50.
 --prune-branches
 	delete branches in the destination repository that do not exist anymore in the source repository,
@@ -276,11 +277,13 @@ absolutizePath() {
 }
 
 # Check the contents of the <filter> argument and die in case of errors.
+# Store in the SUBDIRECTORY_FILTER variable the value of the --subdirectory-filter option (if specified).
 #
 # Arguments:
 #   $@: all parts of the filter
 checkFilter() {
 	checkFilter_some=0
+	SUBDIRECTORY_FILTER=''
 	while [ $# -ge 1 ]; do
 		checkFilter_some=1
 		checkFilter_optName="${1}"
@@ -294,6 +297,13 @@ checkFilter() {
 				;;
 			--tag-name-filter)
 				die "You can't use --tag-name-filter (it's handled automatically)"
+				;;
+			--subdirectory-filter)
+				if [ $# -lt 1 ]; then
+					die "Invalid syntax in filter (${checkFilter_optName} without directory)"
+				fi
+				SUBDIRECTORY_FILTER="${1}"
+				shift 1
 				;;
 			--*-filter)
 				if [ $# -lt 1 ]; then
@@ -320,7 +330,7 @@ checkEnvironment() {
 			die 'The flock command is not available. You may want to use --no-lock option to avoid using it (but no concurrency check will be performed).'
 		fi
 	fi
-	for checkEnvironment_command in git sed grep mktemp; do
+	for checkEnvironment_command in git sed grep awk mktemp; do
 		if ! command -v "${checkEnvironment_command}" >/dev/null; then
 			die "The required ${checkEnvironment_command} command is not available."
 		fi
@@ -764,13 +774,49 @@ restoreState() {
 	fi
 }
 
+# Print the depth of an ancestor of a commit (the commit itself being at depth 1, its parents at depth 2, and so on).
+# In case of merges, we consider the shortest path.
+#
+# Arguments:
+#   $1: the SHA-1 hash of the commit
+#   $2: the SHA-1 hash of the ancestor
+#
+# Output:
+#   The depth of the ancestor, or nothing if $2 is not an ancestor of $1
+getCommitDepth() {
+	git -C "${WORKER_REPOSITORY_DIR}" rev-list --topo-order --parents --ancestry-path "${2}..${1}" |
+		awk -v commit="${1}" -v ancestor="${2}" '
+			BEGIN {
+				depth[commit] = 1
+				result = 0
+			}
+			($1 in depth) {
+				for (i = 2; i <= NF; i++) {
+					if ($i == ancestor) {
+						if (result == 0 || depth[$1] + 1 < result) {
+							result = depth[$1] + 1
+						}
+					} else if (!($i in depth) || depth[$1] + 1 < depth[$i]) {
+						depth[$i] = depth[$1] + 1
+					}
+				}
+			}
+			END {
+				if (result > 0) {
+					print result
+				}
+			}
+		'
+}
+
 # Print the SHA-1 hash of the translated commit that's nearest to a commit of the source repository.
-# We walk the history of the source commit, stopping at the first translated commit of every line of development.
-# If we find more than one translated commit (that's the case of merges), we take the one that contains the other ones.
+# When extracting a directory, we ask git which is the last commit that changes that directory, in the same way git filter-branch does.
+# Otherwise we walk the history of the source commit, stopping at the first translated commit of every line of development:
+# if we find more than one translated commit (that's the case of merges), we take the one that contains the other ones.
 #
 # Arguments:
 #   $1: the SHA-1 hash of the source commit
-#   $2: the maximum number of commits to be inspected (empty for no limits)
+#   $2: the maximum depth of the commits to be inspected, the source commit being at depth 1 (empty for no limits)
 #
 # Output:
 #   The SHA-1 of the translated commit, or nothing if it can't be found
@@ -781,12 +827,29 @@ getNearestTranslatedCommit() {
 			return 0
 		fi
 	fi
-	getNearestTranslatedCommit_queue="${1}"
+	if [ -n "${SUBDIRECTORY_FILTER}" ]; then
+		getNearestTranslatedCommit_commitHash="$(git -C "${WORKER_REPOSITORY_DIR}" rev-list --simplify-merges --max-count=1 "${1}" -- "${SUBDIRECTORY_FILTER}")"
+		if [ -z "${getNearestTranslatedCommit_commitHash}" ]; then
+			return 0
+		fi
+		if [ -n "${2}" ] && [ "${getNearestTranslatedCommit_commitHash}" != "${1}" ]; then
+			getNearestTranslatedCommit_depth="$(getCommitDepth "${1}" "${getNearestTranslatedCommit_commitHash}")"
+			if [ -z "${getNearestTranslatedCommit_depth}" ] || [ "${getNearestTranslatedCommit_depth}" -gt "${2}" ]; then
+				return 0
+			fi
+		fi
+		if getNearestTranslatedCommit_mappedCommit="$(grep -E "^${getNearestTranslatedCommit_commitHash}:." "${WORKER_REPOSITORY_DIR}.map")"; then
+			printf '%s' "${getNearestTranslatedCommit_mappedCommit#"${getNearestTranslatedCommit_commitHash}":}"
+		fi
+		return 0
+	fi
+	getNearestTranslatedCommit_queue="${1}:1"
 	getNearestTranslatedCommit_inspected=''
-	getNearestTranslatedCommit_count=0
 	getNearestTranslatedCommit_result=''
 	while [ -n "${getNearestTranslatedCommit_queue}" ]; do
 		getNearestTranslatedCommit_commitHash="${getNearestTranslatedCommit_queue%% *}"
+		getNearestTranslatedCommit_depth="${getNearestTranslatedCommit_commitHash#*:}"
+		getNearestTranslatedCommit_commitHash="${getNearestTranslatedCommit_commitHash%:*}"
 		case "${getNearestTranslatedCommit_queue}" in
 			*' '*)
 				getNearestTranslatedCommit_queue="${getNearestTranslatedCommit_queue#* }"
@@ -798,11 +861,10 @@ getNearestTranslatedCommit() {
 		if itemInList "${getNearestTranslatedCommit_commitHash}" "${getNearestTranslatedCommit_inspected}"; then
 			continue
 		fi
-		if [ -n "${2}" ] && [ "${getNearestTranslatedCommit_count}" -ge "${2}" ]; then
-			break
+		if [ -n "${2}" ] && [ "${getNearestTranslatedCommit_depth}" -gt "${2}" ]; then
+			continue
 		fi
 		getNearestTranslatedCommit_inspected="${getNearestTranslatedCommit_inspected} ${getNearestTranslatedCommit_commitHash}"
-		getNearestTranslatedCommit_count=$((getNearestTranslatedCommit_count + 1))
 		if getNearestTranslatedCommit_mappedCommit="$(grep -E "^${getNearestTranslatedCommit_commitHash}:." "${WORKER_REPOSITORY_DIR}.map")"; then
 			getNearestTranslatedCommit_mappedCommit="${getNearestTranslatedCommit_mappedCommit#"${getNearestTranslatedCommit_commitHash}":}"
 			if [ -z "${getNearestTranslatedCommit_result}" ]; then
@@ -812,7 +874,7 @@ getNearestTranslatedCommit() {
 			fi
 		else
 			for getNearestTranslatedCommit_parent in $(git -C "${WORKER_REPOSITORY_DIR}" rev-list --parents --max-count=1 "${getNearestTranslatedCommit_commitHash}" | cut -s -d ' ' -f 2-); do
-				getNearestTranslatedCommit_queue="${getNearestTranslatedCommit_queue:+${getNearestTranslatedCommit_queue} }${getNearestTranslatedCommit_parent}"
+				getNearestTranslatedCommit_queue="${getNearestTranslatedCommit_queue:+${getNearestTranslatedCommit_queue} }${getNearestTranslatedCommit_parent}:$((getNearestTranslatedCommit_depth + 1))"
 			done
 		fi
 	done
