@@ -180,7 +180,7 @@ Where:
 	how the output should be formatted. This can be one of these values:
 	- auto: use 'github' when running in GitHub Actions, 'plain' otherwise (default)
 	- plain: plain text
-	- github: group the output in sections and highlight the errors, by using the workflow commands of GitHub Actions
+	- github: group the output in sections and highlight errors and warnings, by using the workflow commands of GitHub Actions
 sourcerepository
 	The URL or path to the source repository.
 filter
