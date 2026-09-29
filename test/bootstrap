@@ -2,8 +2,8 @@
 
 set -o errexit
 set -o nounset
-IFS=' 	
-'
+IFS="$(printf ' \t\nx')"
+IFS="${IFS%x}"
 
 if [ "${IS_TEST_CASE:-1}" -eq '1' ]; then
 	DIR_TESTCASES="$(cd -- "$(dirname -- "$0")" && pwd -P)"

@@ -1,0 +1,5 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "$0")" && pwd -P)/../bootstrap"
+
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --log-format invalid -- "${DIR_SOURCE}" '--prune-empty' "${DIR_DESTINATION}"

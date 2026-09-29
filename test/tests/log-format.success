@@ -1,0 +1,76 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+# $1: the description of the check
+# $2: the text that must be found (empty to skip this check)
+# $3: the text that must not be found (empty to skip this check)
+# $4: the file to be checked
+checkOutput() {
+	printf 'Checking %s\n' "${1}"
+	if [ -n "${2}" ] && ! grep -Fqx -- "${2}" "${4}"; then
+		printf 'This line has not been found: %s\nOutput:\n' "${2}" >&2
+		cat "${4}" >&2
+		exit 1
+	fi
+	if [ -n "${3}" ] && grep -Fq -- "${3}" "${4}"; then
+		printf 'This text should not be present: %s\nOutput:\n' "${3}" >&2
+		cat "${4}" >&2
+		exit 1
+	fi
+}
+
+# $1: the value of the GITHUB_ACTIONS environment variable
+# $@: the other arguments are the options to be passed to the script
+runMain() {
+	initializeRepositories
+	runMain_githubActions="${1}"
+	shift 1
+	GITHUB_ACTIONS="${runMain_githubActions}" "${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'master' "$@" -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}" >"${DIR_TEMP}/stdout" 2>"${DIR_TEMP}/stderr"
+}
+
+# $1: the value of the GITHUB_ACTIONS environment variable
+# $@: the other arguments are the options to be passed to the script
+runMainWithError() {
+	initializeRepositories
+	runMainWithError_githubActions="${1}"
+	shift 1
+	if GITHUB_ACTIONS="${runMainWithError_githubActions}" "${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'not-existing' "$@" -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}" >"${DIR_TEMP}/stdout" 2>"${DIR_TEMP}/stderr"; then
+		echo 'The script should have failed' >&2
+		exit 1
+	fi
+}
+
+runMain '' --log-format plain
+checkOutput 'sections with the plain format' '# Processing branch master' '::' "${DIR_TEMP}/stdout"
+
+runMain 'true' --log-format plain
+checkOutput 'sections with the plain format in GitHub Actions' '# Processing branch master' '::' "${DIR_TEMP}/stdout"
+
+runMain '' --log-format github
+checkOutput 'start of the sections with the github format' '::group::Processing branch master' '# ' "${DIR_TEMP}/stdout"
+checkOutput 'end of the sections with the github format' '::endgroup::' '' "${DIR_TEMP}/stdout"
+
+runMain '' --log-format auto
+checkOutput 'sections with the auto format' '# Processing branch master' '::' "${DIR_TEMP}/stdout"
+
+runMain 'true' --log-format auto
+checkOutput 'sections with the auto format in GitHub Actions' '::group::Processing branch master' '# ' "${DIR_TEMP}/stdout"
+
+runMain ''
+checkOutput 'sections with the default format' '# Processing branch master' '::' "${DIR_TEMP}/stdout"
+
+runMain 'true'
+checkOutput 'sections with the default format in GitHub Actions' '::group::Processing branch master' '# ' "${DIR_TEMP}/stdout"
+
+runMain '' --log-format plain --tags-plan all
+checkOutput 'warnings with the plain format' 'Unable to remap the tag tag-01: nearest commit not found' '::' "${DIR_TEMP}/stderr"
+
+runMain '' --log-format github --tags-plan all
+checkOutput 'warnings with the github format' '::warning::Unable to remap the tag tag-01: nearest commit not found' '' "${DIR_TEMP}/stderr"
+
+runMainWithError '' --log-format plain
+checkOutput 'errors with the plain format' 'None of the source branches passes the whitelist/blacklist filter' '::' "${DIR_TEMP}/stderr"
+
+runMainWithError '' --log-format github
+checkOutput 'errors with the github format' '::error::None of the source branches passes the whitelist/blacklist filter' '' "${DIR_TEMP}/stderr"
