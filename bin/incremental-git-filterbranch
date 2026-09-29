@@ -13,16 +13,103 @@
 set -o errexit
 # Treat unset variables and parameters other than the special parameters "@" and "*" as an error when performing parameter expansion.
 set -o nounset
-# Set the Internal Field Separator
-IFS=' 	
-'
+# Set the Internal Field Separator (space, tab and new line)
+IFS="$(printf ' \t\nx')"
+IFS="${IFS%x}"
+
+# Set the LOG_FORMAT variable, which will contain the actual format of the output ('plain' or 'github').
+#
+# Arguments:
+#   $1: the wanted format ('auto', 'plain' or 'github')
+#
+# Return:
+#   0 (true): if $1 is valid
+#   1 (false): if $1 is not valid
+setLogFormat() {
+	case "${1}" in
+		'auto')
+			if [ "${GITHUB_ACTIONS:-}" = 'true' ]; then
+				LOG_FORMAT='github'
+			else
+				LOG_FORMAT='plain'
+			fi
+			;;
+		'plain' | 'github')
+			LOG_FORMAT="${1}"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+# Start a new section of the log (closing the current one, if any).
+#
+# Arguments:
+#   $1: the title of the section
+startLogSection() {
+	endLogSection
+	if [ "${LOG_FORMAT}" = 'github' ]; then
+		printf '::group::%s\n' "${1}"
+	else
+		printf '# %s\n' "${1}"
+	fi
+	LOG_SECTION_STARTED=1
+}
+
+# End the current section of the log (if any).
+endLogSection() {
+	if [ "${LOG_SECTION_STARTED}" -eq 1 ]; then
+		if [ "${LOG_FORMAT}" = 'github' ]; then
+			printf '::endgroup::\n'
+		else
+			printf '\n'
+		fi
+		LOG_SECTION_STARTED=0
+	fi
+}
+
+# Print a message formatted with a workflow command of GitHub Actions.
+#
+# Arguments:
+#   $1: the name of the command ('error' or 'warning')
+#   $2: the message to be printed
+printGitHubMessage() {
+	# The message must be in a single line
+	printf '::%s::%s\n' "${1}" "$(printf '%s' "${2}" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | awk '{ printf "%s%s", separator, $0; separator = "%0A" }')"
+}
+
+# Print an error message.
+#
+# Arguments:
+#   $1: the message to be printed
+logError() {
+	endLogSection
+	if [ "${LOG_FORMAT}" = 'github' ]; then
+		printGitHubMessage error "${1}" >&2
+	else
+		printf '%s\n' "${1}" >&2
+	fi
+}
+
+# Print a warning message.
+#
+# Arguments:
+#   $1: the message to be printed
+logWarning() {
+	if [ "${LOG_FORMAT}" = 'github' ]; then
+		printGitHubMessage warning "${1}" >&2
+	else
+		printf '%s\n' "${1}" >&2
+	fi
+}
 
 # Exit with 1.
 #
 # Arguments:
 #   $1: the message to be printed
 die() {
-	printf '%s\n' "${1}" >&2
+	logError "${1}"
 	exit 1
 }
 
@@ -33,7 +120,8 @@ die() {
 #                  if not specified: a full syntax will be printed and we'll exit with 0
 usage() {
 	if [ $# -eq 1 ]; then
-		printf '%s\n\n%s\n' "${1}" "Type ${0} --help to get help" >&2
+		logError "${1}"
+		printf '\n%s\n' "Type ${0} --help to get help" >&2
 		exit 1
 	fi
 	printf '%s' "Usage:
@@ -43,7 +131,8 @@ ${0} [-h | --help] [--workdir <workdirpath>]
 	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
 	[--prune-branches] [--prune-tags]
-	[--no-atomic] [--no-lock] [--]
+	[--no-atomic] [--no-lock]
+	[--log-format (auto|plain|github)] [--]
 	<sourcerepository> <filter> <destinationrepository>
 	Apply git filter-branch in an incremental way
 
@@ -87,6 +176,11 @@ Where:
 	Do not use an atomic transaction when pushing to the destination repository.
 --no-lock
 	Do not acquire an exclusive lock (useful for systems that don't have flock(1)).
+--log-format
+	how the output should be formatted. This can be one of these values:
+	- auto: use 'github' when running in GitHub Actions, 'plain' otherwise (default)
+	- plain: plain text
+	- github: group the output in sections and highlight the errors, by using the workflow commands of GitHub Actions
 sourcerepository
 	The URL or path to the source repository.
 filter
@@ -218,6 +312,15 @@ readParameters() {
 			--no-lock)
 				NO_LOCK='yes'
 				shift 1
+				;;
+			--log-format)
+				if [ $# -lt 2 ]; then
+					usage 'Not enough arguments'
+				fi
+				if ! setLogFormat "${2}"; then
+					usage "Invalid value of the ${readParameters_currentArgument} option"
+				fi
+				shift 2
 				;;
 			-*)
 				usage "Unknown option: ${readParameters_currentArgument}"
@@ -454,13 +557,13 @@ acquireLock() {
 prepareLocalSourceRepository() {
 	prepareLocalSourceRepository_haveToCreateMirror=1
 	if [ -f "${SOURCE_REPOSITORY_DIR}/config" ]; then
-		echo '# Updating source repository'
+		startLogSection 'Updating source repository'
 		if git -C "${SOURCE_REPOSITORY_DIR}" remote update --prune; then
 			prepareLocalSourceRepository_haveToCreateMirror=0
 		fi
 	fi
 	if [ ${prepareLocalSourceRepository_haveToCreateMirror} -eq 1 ]; then
-		echo '# Cloning source repository'
+		startLogSection 'Cloning source repository'
 		rm -rf "${SOURCE_REPOSITORY_DIR}"
 		git clone --mirror "${SOURCE_REPOSITORY_URL}" "${SOURCE_REPOSITORY_DIR}"
 	fi
@@ -469,7 +572,7 @@ prepareLocalSourceRepository() {
 # Store in the SOURCE_BRANCHES variable the list of the branches in the source repository.
 # Exit if no branch can be found.
 getSourceRepositoryBranches() {
-	echo '# Listing source branches'
+	startLogSection 'Listing source branches'
 	# List all branches and takes only the part after "refs/heads/", and store them in the SOURCE_BRANCHES variable
 	SOURCE_BRANCHES=$(git -C "${SOURCE_REPOSITORY_DIR}" show-ref --heads | sed -E 's:^.* refs/heads/::')
 	if [ -z "${SOURCE_BRANCHES}" ]; then
@@ -556,7 +659,7 @@ stringPassesLists() {
 # Store in the WORK_BRANCHES variable the list of the branches to be processed (checking the white/black lists).
 # Die if no branch can be found.
 getBranchesToProcess() {
-	echo '# Determining the branches to be processed'
+	startLogSection 'Determining the branches to be processed'
 	WORK_BRANCHES=''
 	for getBranchesToProcess_branch in ${SOURCE_BRANCHES}; do
 		if stringPassesLists "${getBranchesToProcess_branch}" "${BRANCH_WHITELIST}" "${BRANCH_BLACKLIST}"; then
@@ -572,26 +675,26 @@ getBranchesToProcess() {
 prepareWorkerRepository() {
 	prepareWorkerRepository_haveToCreateRepo=1
 	if [ -f "${WORKER_REPOSITORY_DIR}/config" ]; then
-		echo '# Checking working repository'
+		startLogSection 'Checking working repository'
 		if git -C "${WORKER_REPOSITORY_DIR}" rev-parse --git-dir >/dev/null 2>/dev/null; then
 			prepareWorkerRepository_haveToCreateRepo=0
 		fi
 	fi
 	if [ ${prepareWorkerRepository_haveToCreateRepo} -eq 1 ]; then
-		echo '# Creating working repository'
+		startLogSection 'Creating working repository'
 		rm -rf "${WORKER_REPOSITORY_DIR}"
 		git -c init.defaultBranch=master init --bare "${WORKER_REPOSITORY_DIR}"
-		echo '# Adding mirror source repository to working repository'
+		startLogSection 'Adding mirror source repository to working repository'
 		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add source "${SOURCE_REPOSITORY_DIR}"; then
 			rm -rf "${WORKER_REPOSITORY_DIR}"
 			exit 1
 		fi
-		echo '# Adding destination repository to working repository'
+		startLogSection 'Adding destination repository to working repository'
 		if ! git -C "${WORKER_REPOSITORY_DIR}" remote add destination "${DESTINATION_REPOSITORY_URL}"; then
 			rm -rf "${WORKER_REPOSITORY_DIR}"
 			exit 1
 		fi
-		echo '# Fetching data from cloned destination repository'
+		startLogSection 'Fetching data from cloned destination repository'
 		if ! git -C "${WORKER_REPOSITORY_DIR}" fetch --prune destination; then
 			rm -rf "${WORKER_REPOSITORY_DIR}"
 			exit 1
@@ -963,16 +1066,15 @@ processNotConvertedTags() {
 # Arguments:
 #   $1: the name of the tag to be translated
 processNotConvertedTag() {
-	printf '  - remapping tag %s... ' "${1}"
 	processNotConvertedTag_tagOriginalHash="$(getWorkingTagHash "${1}")"
 	if [ -z "${processNotConvertedTag_tagOriginalHash}" ]; then
 		die "$(printf 'failed to get hash of tag %s' "${1}")"
 	fi
 	processNotConvertedTag_translatedCommit="$(getNearestTranslatedCommit "${processNotConvertedTag_tagOriginalHash}" "${PROCESS_TAGS_MAXHISTORYLOOKUP}")"
 	if [ -z "${processNotConvertedTag_translatedCommit}" ]; then
-		printf 'nearest commit not found\n' >&2
+		logWarning "$(printf 'Unable to remap the tag %s: nearest commit not found' "${1}")"
 	else
-		printf 'mapping to commit %s\n' "${processNotConvertedTag_translatedCommit}"
+		printf '  - remapping tag %s... mapping to commit %s\n' "${1}" "${processNotConvertedTag_translatedCommit}"
 		git -C "${WORKER_REPOSITORY_DIR}" tag --force "filter-branch/converted-tags/${1}" "${processNotConvertedTag_translatedCommit}"
 	fi
 }
@@ -983,14 +1085,14 @@ removeTranslatedTags() {
 		# Superfluous
 		return 0
 	fi
-	echo '# Listing currently converted tags'
+	startLogSection 'Listing currently converted tags'
 	removeTranslatedTags_workerTags="$(git -C "${WORKER_REPOSITORY_DIR}" tag -l || true)"
 	if [ -z "${removeTranslatedTags_workerTags}" ]; then
 		return 0
 	fi
-	echo '# Listing tags in source repository'
+	startLogSection 'Listing tags in source repository'
 	removeTranslatedTags_sourceTags="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --tags source | grep -Ev '\^\{\}$' | tr '\t' ' ' | sed -E 's:^.* refs/tags/::g')"
-	echo '# Deleting previously converted tags no more existing in source repository'
+	startLogSection 'Deleting previously converted tags no more existing in source repository'
 	for removeTranslatedTags_workerTag in ${removeTranslatedTags_workerTags}; do
 		removeTranslatedTags_workerTagName="$(printf '%s' "${removeTranslatedTags_workerTag}" | sed -E 's:^filter-branch/converted-tags/::')"
 		removeTranslatedTags_deleteTag=1
@@ -1012,16 +1114,16 @@ removeTranslatedTags() {
 processBranches() {
 	processBranches_pushRefSpec=''
 	for processBranches_branch in ${WORK_BRANCHES}; do
-		echo "# Processing branch ${processBranches_branch}"
+		startLogSection "Processing branch ${processBranches_branch}"
 		processBranch "${processBranches_branch}"
 		if git -C "${WORKER_REPOSITORY_DIR}" show-ref --quiet --verify "refs/heads/filter-branch/result/${processBranches_branch}"; then
 			processBranches_pushRefSpec="${processBranches_pushRefSpec} filter-branch/result/${processBranches_branch}:${processBranches_branch}"
 		fi
 	done
 	if [ -n "${TAGS_PLAN}" ]; then
-		echo '# Listing source tags'
+		startLogSection 'Listing source tags'
 		processBranches_sourceTags=$(getTagList "${SOURCE_REPOSITORY_DIR}")
-		echo '# Determining destination tags'
+		startLogSection 'Determining destination tags'
 		for processBranches_sourceTag in ${processBranches_sourceTags}; do
 			if stringPassesLists "${processBranches_sourceTag}" "${TAG_WHITELIST}" "${TAG_BLACKLIST}"; then
 				processBranches_rewrittenTag="filter-branch/converted-tags/${processBranches_sourceTag}"
@@ -1031,7 +1133,7 @@ processBranches() {
 			fi
 		done
 	fi
-	echo "# Pushing to destination repository"
+	startLogSection 'Pushing to destination repository'
 	# shellcheck disable=SC2086
 	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --force ${ATOMIC} destination ${processBranches_pushRefSpec}
 }
@@ -1070,7 +1172,7 @@ getPruneBranches() {
 				getPruneBranches_currentBranch="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --symref destination HEAD | head -1 | sed -E 's_^ref: +refs/heads/__' | cut -f 1 | cut -d ' ' -f 1)"
 			fi
 			if [ "${getPruneBranches_currentBranch}" = "${getPruneBranches_remoteBranch}" ]; then
-				printf 'Remote branch %s will NOT be deleted since it is the current one\n' "${getPruneBranches_remoteBranch}" >&2
+				logWarning "$(printf 'Remote branch %s will NOT be deleted since it is the current one' "${getPruneBranches_remoteBranch}")"
 			else
 				printf 'refs/heads/%s ' "${getPruneBranches_remoteBranch}"
 			fi
@@ -1082,14 +1184,14 @@ getPruneBranches() {
 pruneDestination() {
 	pruneDestination_allRefs=''
 	if [ ${PRUNE_TAGS} -ne 0 ]; then
-		echo '# Determining destination tags to be removed'
+		startLogSection 'Determining destination tags to be removed'
 		pruneDestination_theseRefs="$(getPruneTags)"
 		if [ -n "${pruneDestination_theseRefs}" ]; then
 			pruneDestination_allRefs="${pruneDestination_allRefs}${pruneDestination_theseRefs}"
 		fi
 	fi
 	if [ ${PRUNE_BRANCHES} -ne 0 ]; then
-		echo '# Determining destination branches to be removed'
+		startLogSection 'Determining destination branches to be removed'
 		pruneDestination_theseRefs="$(getPruneBranches)"
 		if [ -n "${pruneDestination_theseRefs}" ]; then
 			pruneDestination_allRefs="${pruneDestination_allRefs}${pruneDestination_theseRefs}"
@@ -1098,7 +1200,7 @@ pruneDestination() {
 	if [ -z "${pruneDestination_allRefs}" ]; then
 		return 0
 	fi
-	printf '# Deleting refs in destination repository (%s)\n' "${pruneDestination_allRefs% }"
+	startLogSection "Deleting refs in destination repository (${pruneDestination_allRefs% })"
 	# shellcheck disable=SC2086
 	git -C "${WORKER_REPOSITORY_DIR}" push --quiet --delete destination ${pruneDestination_allRefs% }
 }
@@ -1132,6 +1234,8 @@ itemInList() {
 	return 1
 }
 
+LOG_SECTION_STARTED=0
+setLogFormat auto
 readParameters "$@"
 checkEnvironment
 initializeEnvironment
@@ -1143,4 +1247,5 @@ prepareWorkerRepository
 removeTranslatedTags
 processBranches
 pruneDestination
-echo "All done."
+endLogSection
+echo 'All done.'
