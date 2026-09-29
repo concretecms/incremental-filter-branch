@@ -130,7 +130,7 @@ ${0} [-h | --help] [--workdir <workdirpath>]
 	[--tag-whitelist <whitelist>] [--tag-blacklist <blacklist>]
 	[--tags-plan (visited|all|none)]
 	[--tags-max-history-lookup <depth>]
-	[--prune-branches] [--prune-tags]
+	[--prune-branches] [--prune-branches-exclude <list>] [--prune-tags]
 	[--no-atomic] [--no-lock]
 	[--log-format (auto|plain|github)] [--]
 	<sourcerepository> <filter> <destinationrepository>
@@ -169,6 +169,9 @@ Where:
 --prune-branches
 	delete branches in the destination repository that do not exist anymore in the source repository,
 	or that do not satisfy the whitelist/blacklist
+--prune-branches-exclude <list>
+	a whitespace-separated list of branches of the destination repository that --prune-branches must not delete.
+	Multiple options can be specified.
 --prune-tags
 	delete tags in the destination repository that do not exist anymore in the source repository,
 	or that do not satisfy the whitelist/blacklist
@@ -190,7 +193,7 @@ filter
 destinationrepository
 	The URL or path to the destination repository.
 
-You can prefix branch/tag names in both whitelists and blacklists with 'rx:': in this case a regular expression check will be performed.
+You can prefix branch/tag names in whitelists, blacklists and in --prune-branches-exclude with 'rx:': in this case a regular expression check will be performed.
 For instance: --branch-whitelist 'master rx:release\/[0-9]+(\.[0-9]+)*' will match 'master' and 'release/1.1'.
 Please remark that these regular expressions should comply the POSIX ERE (Extended Regular Expressions) syntax.
 "
@@ -212,6 +215,7 @@ readParameters() {
 	ATOMIC='--atomic'
 	NO_LOCK=''
 	PRUNE_BRANCHES=0
+	PRUNE_BRANCHES_EXCLUDE=''
 	PRUNE_TAGS=0
 	while :; do
 		if [ $# -lt 1 ]; then
@@ -301,6 +305,13 @@ readParameters() {
 				PRUNE_BRANCHES=1
 				shift 1
 				;;
+			--prune-branches-exclude)
+				if [ $# -lt 2 ]; then
+					usage 'Not enough arguments'
+				fi
+				PRUNE_BRANCHES_EXCLUDE="${PRUNE_BRANCHES_EXCLUDE} ${2}"
+				shift 2
+				;;
 			--prune-tags)
 				PRUNE_TAGS=1
 				shift 1
@@ -337,6 +348,9 @@ readParameters() {
 		if [ "${PRUNE_BRANCHES}" -ne 0 ] || [ "${PRUNE_TAGS}" -ne 0 ]; then
 			die "You can't use --prune-branches or --prune-tags when you specify '--tags-plan none'"
 		fi
+	fi
+	if [ -n "${PRUNE_BRANCHES_EXCLUDE}" ] && [ "${PRUNE_BRANCHES}" -eq 0 ]; then
+		die "You can't use --prune-branches-exclude without --prune-branches"
 	fi
 	if [ $# -lt 3 ]; then
 		usage 'Not enough arguments'
@@ -1162,20 +1176,28 @@ getPruneTags() {
 	done
 }
 
-# Delete in destination repository the non converted branches
+# Get the branches to be removed from the destination repository
+#
+# Output:
+#   - Empty string if no branch should be removed
+#   - Space-separated list (including a final extra space) of full branch paths (refs/heads/...) otherwise
 getPruneBranches() {
 	getPruneBranches_currentBranch=''
 	getPruneBranches_remoteBranches="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --quiet --heads destination | tr '\t' ' ' | sed -E 's:^.* refs/heads/::g')"
 	for getPruneBranches_remoteBranch in ${getPruneBranches_remoteBranches}; do
-		if ! itemInList "${getPruneBranches_remoteBranch}" "${WORK_BRANCHES}"; then
-			if [ -z "${getPruneBranches_currentBranch}" ]; then
-				getPruneBranches_currentBranch="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --symref destination HEAD | head -1 | sed -E 's_^ref: +refs/heads/__' | cut -f 1 | cut -d ' ' -f 1)"
-			fi
-			if [ "${getPruneBranches_currentBranch}" = "${getPruneBranches_remoteBranch}" ]; then
-				logWarning "$(printf 'Remote branch %s will NOT be deleted since it is the current one' "${getPruneBranches_remoteBranch}")"
-			else
-				printf 'refs/heads/%s ' "${getPruneBranches_remoteBranch}"
-			fi
+		if itemInList "${getPruneBranches_remoteBranch}" "${WORK_BRANCHES}"; then
+			continue
+		fi
+		if stringInList "${getPruneBranches_remoteBranch}" "${PRUNE_BRANCHES_EXCLUDE}"; then
+			continue
+		fi
+		if [ -z "${getPruneBranches_currentBranch}" ]; then
+			getPruneBranches_currentBranch="$(git -C "${WORKER_REPOSITORY_DIR}" ls-remote --symref destination HEAD | head -1 | sed -E 's_^ref: +refs/heads/__' | cut -f 1 | cut -d ' ' -f 1)"
+		fi
+		if [ "${getPruneBranches_currentBranch}" = "${getPruneBranches_remoteBranch}" ]; then
+			logWarning "$(printf 'Remote branch %s will NOT be deleted since it is the current one' "${getPruneBranches_remoteBranch}")"
+		else
+			printf 'refs/heads/%s ' "${getPruneBranches_remoteBranch}"
 		fi
 	done
 }
