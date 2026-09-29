@@ -1,0 +1,31 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+initializeRepositories
+
+echo 'Creating branches in the destination repository'
+emptyTree="$(git -C "${DIR_DESTINATION}" mktree </dev/null)"
+extraCommit="$(git -C "${DIR_DESTINATION}" -c user.name='John Doe' -c user.email='email@example.com' commit-tree -m 'Extra commit' "${emptyTree}")"
+for extraBranch in splitter keep-me extra; do
+	git -C "${DIR_DESTINATION}" update-ref "refs/heads/${extraBranch}" "${extraCommit}"
+done
+
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --prune-branches --prune-branches-exclude 'splitter rx:keep-.*' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+echo 'Fetching final branches'
+actualBranches="$(getBranchList "${DIR_DESTINATION}")"
+expectedBrances='keep-me master slave splitter'
+if [ "${actualBranches}" != "${expectedBrances}" ]; then
+	printf 'Expected branches: %s\nResulting branches: %s\n' "${expectedBrances}" "${actualBranches}" >&2
+	exit 1
+fi
+
+echo 'Checking that the excluded branches have not been changed'
+for extraBranch in splitter keep-me; do
+	actualCommit="$(git -C "${DIR_DESTINATION}" rev-parse "refs/heads/${extraBranch}")"
+	if [ "${actualCommit}" != "${extraCommit}" ]; then
+		printf 'Expected commit of branch %s: %s\nResulting commit: %s\n' "${extraBranch}" "${extraCommit}" "${actualCommit}" >&2
+		exit 1
+	fi
+done
