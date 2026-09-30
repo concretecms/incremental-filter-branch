@@ -1,0 +1,17 @@
+#!/bin/sh
+
+. "$(cd -- "$(dirname -- "${0}")" && pwd -P)/../bootstrap"
+
+initializeRepositories
+
+# The whole regular expression must match the whole branch name:
+# 'mas' must not match 'master' even if it's followed by an alternative
+"${BIN_MAIN}" ${BIN_MAIN_OPTIONS} --workdir "${DIR_TEMP}" --branch-whitelist 'rx:mas|slave' -- "${DIR_SOURCE}" '--prune-empty --subdirectory-filter subdir' "${DIR_DESTINATION}"
+
+echo 'Fetching branches'
+actualBranches="$(getBranchList "${DIR_DESTINATION}")"
+expectedBrances='slave'
+if [ "${actualBranches}" != "${expectedBrances}" ]; then
+	printf 'Expected branches: %s\nResulting branches with rx whitelist: %s\n' "${expectedBrances}" "${actualBranches}" >&2
+	exit 1
+fi

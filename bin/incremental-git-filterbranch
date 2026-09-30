@@ -632,7 +632,7 @@ stringInList() {
 			case "${stringInList_listItem}" in
 				rx:*)
 					stringInList_substring=$(printf '%s' "${stringInList_listItem}" | cut -c4-)
-					if printf '%s' "${1}" | grep -Eq "^${stringInList_substring}$"; then
+					if printf '%s' "${1}" | grep -Eq "^(${stringInList_substring})$"; then
 						return 0
 					fi
 					;;
